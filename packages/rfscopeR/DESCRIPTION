@@ -1,0 +1,9 @@
+Package: rfscopeR
+Title: RFScope API and RF Dataset Client
+Version: 0.0.1
+Authors@R: person("RFScope", "Contributors", role = c("aut", "cre"), email = "maintainers@example.invalid")
+Description: Minimal client scaffold for RFScope status APIs and future reproducible RF analytics.
+License: MIT + file LICENSE
+Encoding: UTF-8
+RoxygenNote: 7.3.2
+Imports: jsonlite

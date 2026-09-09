@@ -1,0 +1,12 @@
+[package]
+name="rf-device"
+version.workspace=true
+edition.workspace=true
+license.workspace=true
+[dependencies]
+async-trait.workspace=true
+num-complex.workspace=true
+rand.workspace=true
+rand_chacha.workspace=true
+rf-types={path="../rf-types"}
+thiserror.workspace=true

@@ -1,0 +1,1 @@
+import{describe,expect,it}from"vitest";import{decodeSpectrum}from"./protocol";describe("spectrum protocol",()=>{it("rejects truncated data",()=>expect(()=>decodeSpectrum(new ArrayBuffer(4))).toThrow("truncated"));});

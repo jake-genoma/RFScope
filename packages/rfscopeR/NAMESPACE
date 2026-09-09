@@ -1,0 +1,2 @@
+export(rfscope_connect)
+export(rfscope_status)

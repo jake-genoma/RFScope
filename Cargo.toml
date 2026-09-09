@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/rf-types",
+  "crates/rf-device",
+  "crates/rf-dsp",
+  "crates/rf-engine",
+  "crates/rf-server",
+]
+exclude = ["apps/desktop/src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+axum = { version = "0.8", features = ["ws"] }
+bytes = "1.10"
+futures-util = "0.3"
+num-complex = "0.4"
+rand = "0.9"
+rand_chacha = "0.9"
+rustfft = "6.2"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+tokio = { version = "1.44", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tower-http = { version = "0.6", features = ["cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

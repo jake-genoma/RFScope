@@ -1,0 +1,1 @@
+{"private":true,"scripts":{"dev":"npm --prefix web run dev","build":"npm --prefix web run build","test":"npm --prefix web test","check":"npm --prefix web run check"}}
