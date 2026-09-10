@@ -25,6 +25,7 @@ SigMF playback through the common IQ/DSP pipeline is implemented; see
 Initial uncalibrated spectrum measurements and `/api/v1/analysis` are implemented.
 rfscopeR now includes low-rate status/device/VFO/session/recording/detection/query helpers and base-R plotting functions.
 Versioned SQLite metadata migrations and session/recording indexes are implemented; Parquet/DuckDB analytical storage remains outstanding.
+The web shell now provides functional Live, Receivers, Recordings, Playback, Analysis, Diagnostics, Settings, Signals, and Workspaces views; persistence-backed workflows remain incremental.
 
 1. VFO translation/filtering, AM/NFM, 48 kHz browser audio, multiple-VFO model.
 2. Atomic SigMF recording/indexing and file playback through `IqSource`.

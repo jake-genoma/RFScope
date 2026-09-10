@@ -18,12 +18,15 @@ type Status = {
 };
 type Recording = { id: string; directory: string; active: boolean; sample_rate_hz: number; center_frequency_hz: number; elapsed_ms: number; bytes_written: number; samples_written: number; queued_blocks: number; dropped_blocks: number; dropped_bytes: number; write_errors: number; projected_bytes_per_second: number; last_error: string | null };
 type Playback = { loaded: boolean; metadata_path: string | null; data_path: string | null; session_id: string | null; hardware: string | null; center_frequency_hz: number; sample_rate_hz: number; total_samples: number; position_samples: number; playing: boolean; ended: boolean };
+type Analysis = { peak_frequency_hz: number; peak_dbfs: number; noise_floor_dbfs: number; snr_db: number; bandwidth_3db_hz: number; bandwidth_6db_hz: number; occupied_bandwidth_99_hz: number; amplitude_mean_dbfs: number; amplitude_min_dbfs: number; amplitude_max_dbfs: number };
 function App() {
+  const [view, setView] = useState("Live");
   const [status, setStatus] = useState<Status | null>(null);
   const [vfos, setVfos] = useState<Vfo[]>([]);
   const [recording, setRecording] = useState<Recording | null>(null);
   const [playback, setPlayback] = useState<Playback | null>(null);
   const [playbackPath, setPlaybackPath] = useState("");
+  const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [error, setError] = useState("");
   const selectedDevice = useRef<DeviceSelection | undefined>(undefined);
@@ -34,19 +37,19 @@ function App() {
   const lastFrame = useRef<ReturnType<typeof decodeSpectrum> | null>(null);
   async function refresh() {
     try {
-      const [stateResponse, vfoResponse, recordingResponse, playbackResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`)]);
-      if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok) throw new Error("Status request failed");
-      setStatus(await stateResponse.json() as Status); setVfos(await vfoResponse.json() as Vfo[]); setRecording(await recordingResponse.json() as Recording | null); setPlayback(await playbackResponse.json() as Playback | null);
+      const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`)]);
+      if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok) throw new Error("Status request failed");
+      setStatus(await stateResponse.json() as Status); setVfos(await vfoResponse.json() as Vfo[]); setRecording(await recordingResponse.json() as Recording | null); setPlayback(await playbackResponse.json() as Playback | null); setAnalysis(await analysisResponse.json() as Analysis | null);
     } catch (error) { setError(String(error)); }
   }
   useEffect(() => {
     let alive = true;
     const poll = async () => {
       try {
-        const [stateResponse, vfoResponse, recordingResponse, playbackResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`)]);
-        if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok) throw new Error("Status request failed");
-        const state = await stateResponse.json() as Status, receivers = await vfoResponse.json() as Vfo[], currentRecording = await recordingResponse.json() as Recording | null, currentPlayback = await playbackResponse.json() as Playback | null;
-        if (alive) { setStatus(state); setVfos(receivers); setRecording(currentRecording); setPlayback(currentPlayback); }
+        const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`)]);
+        if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok) throw new Error("Status request failed");
+        const state = await stateResponse.json() as Status, receivers = await vfoResponse.json() as Vfo[], currentRecording = await recordingResponse.json() as Recording | null, currentPlayback = await playbackResponse.json() as Playback | null, currentAnalysis = await analysisResponse.json() as Analysis | null;
+        if (alive) { setStatus(state); setVfos(receivers); setRecording(currentRecording); setPlayback(currentPlayback); setAnalysis(currentAnalysis); }
       } catch { if (alive) setError("Backend offline — run `just demo`"); }
     };
     void poll(); const timer = setInterval(() => void poll(), 1000);
@@ -87,11 +90,11 @@ function App() {
   }
   const visible = !status?.device || status.device.supports_iq_streaming;
   return <main>
-    <header><b>RF<span>Scope</span></b><nav>{["Live", "Receivers", "Recordings", "Playback", "Signals", "Analysis", "Workspaces", "Diagnostics", "Settings"].map(view => <button key={view} className={view === "Live" ? "active" : ""} title={view === "Live" ? "Live workstation" : "Not implemented yet"}>{view}</button>)}</nav></header>
+    <header><b>RF<span>Scope</span></b><nav>{["Live", "Receivers", "Recordings", "Playback", "Signals", "Analysis", "Workspaces", "Diagnostics", "Settings"].map(name => <button key={name} onClick={() => setView(name)} className={view === name ? "active" : ""}>{name}</button>)}</nav></header>
     <DevicePanel device={status?.device} onChange={() => void refresh()} />
     <section className="device-panel"><h3>Playback</h3><input aria-label="SigMF metadata path" value={playbackPath} onChange={e => setPlaybackPath(e.target.value)} placeholder="/path/to/capture.sigmf-meta" /><button onClick={() => void playbackAction("POST", { metadata_path: playbackPath })} disabled={!playbackPath}>Load</button>{playback?.loaded && <><button onClick={() => void playbackAction("PATCH", { action: playback.playing ? "pause" : "play" })}>{playback.playing ? "Pause" : "Play"}</button><button onClick={() => void playbackAction("DELETE")}>Eject</button><span> {playback.session_id} · {playback.position_samples.toLocaleString()} / {playback.total_samples.toLocaleString()} samples</span></>}</section>
     {error && <aside role="alert">{error}</aside>}
-    <div hidden={!visible}>
+    <div hidden={!visible || view !== "Live"}>
       <section className="status">
         <i className={status?.state.running ? "on" : ""} /><strong>{status?.source ?? "offline"}</strong>
         <label>Center <input type="number" value={status?.state.center_frequency_hz ?? 100000000} step="1000" onChange={e => void patch({ center_frequency_hz: Number(e.target.value) })} /></label>
@@ -110,6 +113,16 @@ function App() {
       <section className="panels"><article><h3>Signal information</h3><p>{status?.source === "mock" ? "Deterministic scene: CW −300 kHz · AM center · NFM +400 kHz" : "Live receiver · uncalibrated dBFS"}</p></article>
         <article><h3>Diagnostics</h3><dl>{Object.entries(status?.diagnostics ?? {}).map(([name, value]) => <React.Fragment key={name}><dt>{name.replaceAll("_", " ")}</dt><dd>{typeof value === "number" ? value.toLocaleString() : String(value)}</dd></React.Fragment>)}</dl></article></section>
     </div>
+    {view !== "Live" && <section className="panels workstation-view">
+      {view === "Receivers" && <article><h3>Receivers</h3><VfoPanel vfos={vfos} center={status?.state.center_frequency_hz ?? 0} refresh={() => void refresh()} /></article>}
+      {view === "Recordings" && <article><h3>Recordings</h3><p>{recording ? `${recording.id} · ${(recording.bytes_written / 1e6).toFixed(1)} MB · ${recording.dropped_blocks} dropped blocks` : "No active recording"}</p></article>}
+      {view === "Playback" && <article><h3>Playback timeline</h3><p>{playback?.loaded ? `${playback.session_id} · ${playback.position_samples.toLocaleString()} / ${playback.total_samples.toLocaleString()} samples` : "Load a SigMF metadata file above."}</p></article>}
+      {view === "Signals" && <article><h3>Signals</h3><p>Signal browser and event annotations will use persisted observations.</p></article>}
+      {view === "Analysis" && <article><h3>Analysis</h3>{analysis ? <dl>{Object.entries(analysis).map(([key, value]) => <React.Fragment key={key}><dt>{key.replaceAll("_", " ")}</dt><dd>{value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</dd></React.Fragment>)}</dl> : <p>Waiting for a spectrum frame.</p>}</article>}
+      {view === "Workspaces" && <article><h3>Workspaces</h3><p>Workspace persistence is backed by the versioned SQLite store.</p></article>}
+      {view === "Diagnostics" && <article><h3>Diagnostics</h3><dl>{Object.entries(status?.diagnostics ?? {}).map(([name, value]) => <React.Fragment key={name}><dt>{name.replaceAll("_", " ")}</dt><dd>{String(value)}</dd></React.Fragment>)}</dl></article>}
+      {view === "Settings" && <article><h3>Settings</h3><p>Server: {API} · source: {status?.source ?? "offline"}</p></article>}
+    </section>}
   </main>;
 }
 createRoot(document.getElementById("root")!).render(<React.StrictMode><App /></React.StrictMode>);
