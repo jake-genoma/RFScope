@@ -17,10 +17,13 @@ type Status = {
     fft_frames: number; dropped_visualization_frames: number; websocket_clients: number };
 };
 type Recording = { id: string; directory: string; active: boolean; sample_rate_hz: number; center_frequency_hz: number; elapsed_ms: number; bytes_written: number; samples_written: number; queued_blocks: number; dropped_blocks: number; dropped_bytes: number; write_errors: number; projected_bytes_per_second: number; last_error: string | null };
+type Playback = { loaded: boolean; metadata_path: string | null; data_path: string | null; session_id: string | null; hardware: string | null; center_frequency_hz: number; sample_rate_hz: number; total_samples: number; position_samples: number; playing: boolean; ended: boolean };
 function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [vfos, setVfos] = useState<Vfo[]>([]);
   const [recording, setRecording] = useState<Recording | null>(null);
+  const [playback, setPlayback] = useState<Playback | null>(null);
+  const [playbackPath, setPlaybackPath] = useState("");
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [error, setError] = useState("");
   const selectedDevice = useRef<DeviceSelection | undefined>(undefined);
@@ -31,19 +34,19 @@ function App() {
   const lastFrame = useRef<ReturnType<typeof decodeSpectrum> | null>(null);
   async function refresh() {
     try {
-      const [stateResponse, vfoResponse, recordingResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`)]);
-      if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok) throw new Error("Status request failed");
-      setStatus(await stateResponse.json() as Status); setVfos(await vfoResponse.json() as Vfo[]); setRecording(await recordingResponse.json() as Recording | null);
+      const [stateResponse, vfoResponse, recordingResponse, playbackResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`)]);
+      if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok) throw new Error("Status request failed");
+      setStatus(await stateResponse.json() as Status); setVfos(await vfoResponse.json() as Vfo[]); setRecording(await recordingResponse.json() as Recording | null); setPlayback(await playbackResponse.json() as Playback | null);
     } catch (error) { setError(String(error)); }
   }
   useEffect(() => {
     let alive = true;
     const poll = async () => {
       try {
-        const [stateResponse, vfoResponse, recordingResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`)]);
-        if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok) throw new Error("Status request failed");
-        const state = await stateResponse.json() as Status, receivers = await vfoResponse.json() as Vfo[], currentRecording = await recordingResponse.json() as Recording | null;
-        if (alive) { setStatus(state); setVfos(receivers); setRecording(currentRecording); }
+        const [stateResponse, vfoResponse, recordingResponse, playbackResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`)]);
+        if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok) throw new Error("Status request failed");
+        const state = await stateResponse.json() as Status, receivers = await vfoResponse.json() as Vfo[], currentRecording = await recordingResponse.json() as Recording | null, currentPlayback = await playbackResponse.json() as Playback | null;
+        if (alive) { setStatus(state); setVfos(receivers); setRecording(currentRecording); setPlayback(currentPlayback); }
       } catch { if (alive) setError("Backend offline — run `just demo`"); }
     };
     void poll(); const timer = setInterval(() => void poll(), 1000);
@@ -78,10 +81,15 @@ function App() {
     catch (error) { setError(String(error)); }
     finally { setRecordingBusy(false); }
   }
+  async function playbackAction(method: "POST" | "PATCH" | "DELETE", body?: object) {
+    try { const response = await fetch(`${API}/playback`, { method, headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined }); if (!response.ok && response.status !== 204) throw new Error(await response.text()); if (response.status !== 204) setPlayback(await response.json() as Playback); setError(""); }
+    catch (error) { setError(String(error)); }
+  }
   const visible = !status?.device || status.device.supports_iq_streaming;
   return <main>
     <header><b>RF<span>Scope</span></b><nav>{["Live", "Receivers", "Recordings", "Playback", "Signals", "Analysis", "Workspaces", "Diagnostics", "Settings"].map(view => <button key={view} className={view === "Live" ? "active" : ""} title={view === "Live" ? "Live workstation" : "Not implemented yet"}>{view}</button>)}</nav></header>
     <DevicePanel device={status?.device} onChange={() => void refresh()} />
+    <section className="device-panel"><h3>Playback</h3><input aria-label="SigMF metadata path" value={playbackPath} onChange={e => setPlaybackPath(e.target.value)} placeholder="/path/to/capture.sigmf-meta" /><button onClick={() => void playbackAction("POST", { metadata_path: playbackPath })} disabled={!playbackPath}>Load</button>{playback?.loaded && <><button onClick={() => void playbackAction("PATCH", { action: playback.playing ? "pause" : "play" })}>{playback.playing ? "Pause" : "Play"}</button><button onClick={() => void playbackAction("DELETE")}>Eject</button><span> {playback.session_id} · {playback.position_samples.toLocaleString()} / {playback.total_samples.toLocaleString()} samples</span></>}</section>
     {error && <aside role="alert">{error}</aside>}
     <div hidden={!visible}>
       <section className="status">

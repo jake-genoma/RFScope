@@ -2,7 +2,7 @@
 
 Rust owns ingestion, bounded queues, DSP, recording/playback, device state, and network services. React owns controls and presentation; renderer classes own pixel lifecycles outside React. R owns reproducible historical/statistical workflows.
 
-`IqSource` is the common source seam. Both `MockSource` and hardware `BufferedSource` feed complex blocks into `Engine`; SigMF playback will use that same seam. The engine publishes latest-useful spectrum frames through a bounded Tokio broadcast channel (capacity four). Slow visualization clients lag/drop rather than creating unbounded history. Recording will branch from raw IQ before display DSP with a separately bounded, integrity-prioritized writer path.
+`IqSource` is the common source seam. `MockSource`, hardware `BufferedSource`, and `SigmfSource` feed complex blocks into `Engine`; playback uses the same VFO, demodulation, audio, and spectrum path. The engine publishes latest-useful spectrum frames through a bounded Tokio broadcast channel (capacity four). Slow visualization clients lag/drop rather than creating unbounded history. Recording branches from raw IQ before display DSP with a separately bounded, integrity-prioritized writer path.
 
 CPU DSP remains outside HTTP handlers. Tokio operates control/networking; a separate thread with its own lightweight runtime drains IQ and performs spectrum DSP. State is explicit and owned by `Engine`, not hidden globally.
 

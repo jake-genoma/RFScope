@@ -1,5 +1,6 @@
 //! Capability-driven SDR source abstraction and deterministic mock backend.
 pub mod control;
+pub mod file;
 #[cfg(feature = "hackrf")]
 mod hackrf;
 pub mod stream;
@@ -17,6 +18,10 @@ pub enum DeviceError {
     NoData,
     #[error("IQ stream: {0}")]
     Stream(String),
+    #[error("file source: {0}")]
+    File(String),
+    #[error("playback reached end of file")]
+    EndOfFile,
     #[error("value {value} is outside {minimum}..={maximum}")]
     OutOfRange {
         value: u64,

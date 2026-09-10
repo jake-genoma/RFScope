@@ -1,5 +1,6 @@
 //! Shared live/file-ready IQ pipeline and spectrum wire encoder.
 pub mod audio;
+pub mod playback;
 pub mod recording;
 pub mod vfo;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -21,6 +22,7 @@ use tokio::sync::{broadcast, RwLock};
 pub const SPECTRUM_HEADER_BYTES: usize = 48;
 pub struct Engine {
     pub recording: Arc<recording::RecordingManager>,
+    pub playback: Arc<playback::PlaybackManager>,
     pub vfos: vfo::VfoBank,
     pub hardware: AtomicBool,
     pub shutdown: AtomicBool,
@@ -40,6 +42,7 @@ impl Engine {
             recording: Arc::new(recording::RecordingManager::new(
                 std::env::var("RFSCOPE_RECORDINGS").unwrap_or_else(|_| "recordings".into()),
             )),
+            playback: Arc::new(playback::PlaybackManager::default()),
             vfos: vfo::VfoBank::default(),
             hardware: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
@@ -89,6 +92,7 @@ impl Engine {
         let mut vfos = vfo::VfoProcessor::default();
         let mut iq_drops = 0;
         let mut mock_deadline = tokio::time::Instant::now();
+        let mut playback_deadline = tokio::time::Instant::now();
         let mut last_frame = std::time::Instant::now();
         while !self.shutdown.load(Ordering::Acquire) {
             if let Ok(mut pending) = devices.stream.lock() {
@@ -109,7 +113,18 @@ impl Engine {
             }
             let mut state = self.state.read().await.clone();
             let size = *self.fft_size.read().await;
-            let result = if hardware {
+            let playback_loaded = self.playback.summary().is_some();
+            let playback = self.playback.is_playing();
+            let result = if playback_loaded {
+                if let Some(playback_state) = self.playback.state() {
+                    state = playback_state;
+                }
+                if playback {
+                    self.playback.read(&mut iq)
+                } else {
+                    Err(DeviceError::NoData)
+                }
+            } else if hardware {
                 if let Some(source) = hardware_source.as_mut() {
                     source.set_recording(self.recording.sink());
                     state = source.state();
@@ -135,8 +150,9 @@ impl Engine {
             };
             let count = match result {
                 Ok(count) => count,
-                Err(DeviceError::NoData) => {
+                Err(DeviceError::NoData) | Err(DeviceError::EndOfFile) => {
                     mock_deadline = tokio::time::Instant::now();
+                    playback_deadline = tokio::time::Instant::now();
                     if !state.running {
                         vfos.pause(&self.vfos);
                     }
@@ -156,7 +172,12 @@ impl Engine {
                 iq_drops = drops;
             }
             vfos.process(&self.vfos, &state, &iq[..count]);
-            if !hardware {
+            if playback {
+                playback_deadline += std::time::Duration::from_secs_f64(
+                    count as f64 / state.sample_rate_hz.max(1) as f64,
+                );
+                tokio::time::sleep_until(playback_deadline).await;
+            } else if !hardware {
                 mock_deadline +=
                     std::time::Duration::from_secs_f64(count as f64 / state.sample_rate_hz as f64);
                 tokio::time::sleep_until(mock_deadline).await;

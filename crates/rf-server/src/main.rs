@@ -11,6 +11,7 @@ use axum::{
 use rf_device::control::{ControlError, DeviceController};
 use rf_engine::Engine;
 use rf_types::{DeviceCommand, DeviceInventory, DeviceSelection, DeviceStatePatch, Status};
+use serde::Deserialize;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
@@ -83,6 +84,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .post(recording_start)
                 .delete(recording_stop),
         )
+        .route(
+            "/api/v1/playback",
+            get(playback_status)
+                .post(playback_load)
+                .patch(playback_command)
+                .delete(playback_clear),
+        )
         .route("/api/v1/vfos", get(vfos).post(add_vfo))
         .route(
             "/api/v1/vfos/{id}",
@@ -110,6 +118,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn snapshot(e: &AppState) -> Result<Status, ApiError> {
     let device = device_call(e, |d| d.snapshot()).await?;
     let mut state = e.engine.state.read().await.clone();
+    if let Some(playback) = e.engine.playback.summary() {
+        state.center_frequency_hz = playback.center_frequency_hz;
+        state.sample_rate_hz = playback.sample_rate_hz;
+        state.running = playback.playing;
+    }
     if device.descriptor.driver != "mock" {
         state.running = device.running;
         state.center_frequency_hz = device
@@ -174,6 +187,61 @@ async fn recording_stop(
         .stop()
         .map(Json)
         .map_err(|error| (StatusCode::SERVICE_UNAVAILABLE, error.to_string()))
+}
+#[derive(Debug, Deserialize)]
+struct PlaybackLoadRequest {
+    metadata_path: String,
+}
+#[derive(Debug, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+enum PlaybackRequest {
+    Play,
+    Pause,
+    Seek { position_samples: u64 },
+}
+async fn playback_status(
+    State(e): State<Arc<AppState>>,
+) -> Json<Option<rf_engine::playback::PlaybackSummary>> {
+    Json(e.engine.playback.summary())
+}
+async fn playback_load(
+    State(e): State<Arc<AppState>>,
+    Json(request): Json<PlaybackLoadRequest>,
+) -> Result<Json<rf_engine::playback::PlaybackSummary>, ApiError> {
+    let _guard = e.mutations.lock().await;
+    if e.engine.hardware.load(std::sync::atomic::Ordering::Acquire) {
+        return Err((
+            StatusCode::CONFLICT,
+            "stop the hardware source before loading playback".into(),
+        ));
+    }
+    e.engine
+        .playback
+        .load(request.metadata_path)
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))
+}
+async fn playback_command(
+    State(e): State<Arc<AppState>>,
+    Json(request): Json<PlaybackRequest>,
+) -> Result<Json<rf_engine::playback::PlaybackSummary>, ApiError> {
+    let _guard = e.mutations.lock().await;
+    let result = match request {
+        PlaybackRequest::Play => e.engine.playback.play(),
+        PlaybackRequest::Pause => e.engine.playback.pause(),
+        PlaybackRequest::Seek { position_samples } => e.engine.playback.seek(position_samples),
+    };
+    result
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))
+}
+async fn playback_clear(State(e): State<Arc<AppState>>) -> Result<StatusCode, ApiError> {
+    let _guard = e.mutations.lock().await;
+    e.engine
+        .playback
+        .clear()
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))
 }
 async fn vfos(State(e): State<Arc<AppState>>) -> Result<Json<Vec<rf_types::Vfo>>, ApiError> {
     e.engine

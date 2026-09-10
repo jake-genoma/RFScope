@@ -23,21 +23,34 @@ pub struct SigmfMeta {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SigmfGlobal {
+    #[serde(rename = "core:version")]
     pub core_version: String,
+    #[serde(rename = "core:datatype")]
     pub datatype: String,
+    #[serde(rename = "core:sample_rate")]
     pub sample_rate: u32,
+    #[serde(rename = "core:frequency")]
     pub frequency: u64,
+    #[serde(rename = "core:author")]
     pub author: String,
+    #[serde(rename = "core:description")]
     pub description: String,
+    #[serde(rename = "core:hw")]
     pub hw: String,
+    #[serde(rename = "rfscope:recorder")]
     pub recorder: String,
+    #[serde(rename = "rfscope:session_id")]
     pub session_id: String,
+    #[serde(rename = "rfscope:start_time_unix_ns")]
     pub start_time_unix_ns: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SigmfCapture {
+    #[serde(rename = "core:sample_start")]
     pub core_sample_start: u64,
+    #[serde(rename = "core:frequency")]
     pub frequency: u64,
+    #[serde(rename = "core:sample_rate")]
     pub sample_rate: u32,
 }
 
