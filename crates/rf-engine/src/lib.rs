@@ -2,6 +2,7 @@
 pub mod audio;
 pub mod playback;
 pub mod recording;
+pub mod storage;
 pub mod vfo;
 use bytes::{BufMut, Bytes, BytesMut};
 use rf_device::{
@@ -22,6 +23,7 @@ use tokio::sync::{broadcast, RwLock};
 pub const SPECTRUM_HEADER_BYTES: usize = 48;
 pub struct Engine {
     pub recording: Arc<recording::RecordingManager>,
+    pub storage: Option<Arc<storage::Storage>>,
     pub playback: Arc<playback::PlaybackManager>,
     pub vfos: vfo::VfoBank,
     pub hardware: AtomicBool,
@@ -38,11 +40,15 @@ pub struct Engine {
 }
 impl Engine {
     pub fn mock() -> Arc<Self> {
+        Self::mock_with_storage(None)
+    }
+    pub fn mock_with_storage(storage: Option<Arc<storage::Storage>>) -> Arc<Self> {
         let (frames, _) = broadcast::channel(4);
         Arc::new(Self {
             recording: Arc::new(recording::RecordingManager::new(
                 std::env::var("RFSCOPE_RECORDINGS").unwrap_or_else(|_| "recordings".into()),
             )),
+            storage,
             playback: Arc::new(playback::PlaybackManager::default()),
             vfos: vfo::VfoBank::default(),
             hardware: AtomicBool::new(false),

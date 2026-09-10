@@ -49,7 +49,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse::<u16>()?;
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    let engine = Engine::mock();
+    let storage_path = std::env::var("RFSCOPE_DB").unwrap_or_else(|_| "rfscope.sqlite3".into());
+    let storage = rf_engine::storage::Storage::open(storage_path)?;
+    let engine = Engine::mock_with_storage(Some(Arc::new(storage)));
     let controller = DeviceController::new()?;
     let dsp_engine = engine.clone();
     let dsp_devices = controller.clone();
@@ -79,6 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/analysis", get(analysis))
         .route("/api/v1/sessions", get(sessions))
         .route("/api/v1/recordings", get(recordings))
+        .route("/api/v1/storage/recordings", get(storage_recordings))
         .route("/api/v1/detections", get(detections))
         .route("/api/v1/stream/spectrum", get(ws))
         .route("/api/v1/stream/audio", get(ws_audio))
@@ -160,8 +163,27 @@ async fn analysis(
 ) -> Json<Option<rf_dsp::analysis::SpectrumMeasurements>> {
     Json(e.engine.latest_measurements.read().await.clone())
 }
-async fn sessions(State(_e): State<Arc<AppState>>) -> Json<Vec<serde_json::Value>> {
-    Json(Vec::new())
+async fn sessions(
+    State(e): State<Arc<AppState>>,
+) -> Result<Json<Vec<rf_engine::storage::StoredSession>>, ApiError> {
+    let Some(storage) = &e.engine.storage else {
+        return Ok(Json(Vec::new()));
+    };
+    storage
+        .sessions()
+        .map(Json)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+}
+async fn storage_recordings(
+    State(e): State<Arc<AppState>>,
+) -> Result<Json<Vec<rf_engine::storage::StoredRecording>>, ApiError> {
+    let Some(storage) = &e.engine.storage else {
+        return Ok(Json(Vec::new()));
+    };
+    storage
+        .recordings()
+        .map(Json)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
 }
 async fn recordings(
     State(e): State<Arc<AppState>>,
@@ -196,6 +218,34 @@ async fn recording_start(
             ),
         )
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+    if let Some(storage) = &e.engine.storage {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos() as u64);
+        if let Err(error) = storage
+            .record_session(
+                &summary.id,
+                &status.source,
+                summary.center_frequency_hz,
+                summary.sample_rate_hz,
+                now,
+            )
+            .and_then(|_| {
+                storage.index_recording(
+                    &rf_engine::storage::StoredRecording {
+                        id: summary.id.clone(),
+                        directory: summary.directory.clone(),
+                        sample_rate_hz: summary.sample_rate_hz,
+                        center_frequency_hz: summary.center_frequency_hz,
+                        created_at_unix_ns: now,
+                    },
+                    Some(&summary.id),
+                )
+            })
+        {
+            tracing::error!(%error, recording_id = %summary.id, "failed to index recording in SQLite");
+        }
+    }
     Ok(Json(summary))
 }
 async fn recording_stop(

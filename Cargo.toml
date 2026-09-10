@@ -23,6 +23,7 @@ futures-util = "0.3"
 num-complex = "0.4"
 rand = "0.9"
 rand_chacha = "0.9"
+rusqlite = { version = "0.32", features = ["bundled"] }
 rustfft = "6.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
