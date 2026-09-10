@@ -5,7 +5,7 @@ use axum::{
     },
     http::StatusCode,
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use rf_device::control::{ControlError, DeviceController};
@@ -79,6 +79,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/device/state", get(status).patch(patch_state))
         .route("/api/v1/metrics", get(metrics))
         .route("/api/v1/analysis", get(analysis))
+        .route("/api/v1/analysis/observations", get(analysis_observations))
+        .route("/api/v1/analysis/export", post(analysis_export))
         .route("/api/v1/sessions", get(sessions))
         .route("/api/v1/recordings", get(recordings))
         .route("/api/v1/storage/recordings", get(storage_recordings))
@@ -162,6 +164,47 @@ async fn analysis(
     State(e): State<Arc<AppState>>,
 ) -> Json<Option<rf_dsp::analysis::SpectrumMeasurements>> {
     Json(e.engine.latest_measurements.read().await.clone())
+}
+async fn analysis_observations(
+    State(e): State<Arc<AppState>>,
+) -> Json<Vec<rf_engine::observations::Observation>> {
+    let rows = e
+        .engine
+        .observations
+        .lock()
+        .map(|rows| rows.iter().cloned().collect())
+        .unwrap_or_default();
+    Json(rows)
+}
+#[derive(serde::Serialize)]
+struct ObservationExport {
+    path: String,
+    count: usize,
+}
+async fn analysis_export(
+    State(e): State<Arc<AppState>>,
+) -> Result<Json<ObservationExport>, ApiError> {
+    let rows: Vec<_> = e
+        .engine
+        .observations
+        .lock()
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "observation lock poisoned".into(),
+            )
+        })?
+        .iter()
+        .cloned()
+        .collect();
+    let path =
+        std::env::var("RFSCOPE_OBSERVATIONS").unwrap_or_else(|_| "observations.parquet".into());
+    rf_engine::observations::write_parquet(&path, &rows)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(ObservationExport {
+        path,
+        count: rows.len(),
+    }))
 }
 async fn sessions(
     State(e): State<Arc<AppState>>,

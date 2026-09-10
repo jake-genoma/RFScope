@@ -5,6 +5,8 @@ edition.workspace=true
 license.workspace=true
 [dependencies]
 bytes.workspace=true
+arrow-array.workspace=true
+arrow-schema.workspace=true
 rf-device={path="../rf-device"}
 rf-dsp={path="../rf-dsp"}
 rf-types={path="../rf-types"}
@@ -12,6 +14,7 @@ tokio.workspace=true
 
 tracing.workspace=true
 num-complex.workspace=true
+parquet.workspace=true
 rusqlite.workspace=true
 serde.workspace=true
 serde_json.workspace=true

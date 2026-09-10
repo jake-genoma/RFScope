@@ -1,5 +1,6 @@
 //! Shared live/file-ready IQ pipeline and spectrum wire encoder.
 pub mod audio;
+pub mod observations;
 pub mod playback;
 pub mod recording;
 pub mod storage;
@@ -13,6 +14,7 @@ use rf_device::{
 use rf_dsp::{SpectrumAnalyzer, Window};
 use rf_types::*;
 use std::{
+    collections::VecDeque,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
@@ -33,6 +35,7 @@ pub struct Engine {
     pub fft_size: Arc<RwLock<usize>>,
     pub frames: broadcast::Sender<Bytes>,
     pub latest_measurements: Arc<RwLock<Option<rf_dsp::analysis::SpectrumMeasurements>>>,
+    pub observations: Arc<std::sync::Mutex<VecDeque<observations::Observation>>>,
     received: Arc<AtomicU64>,
     frame_count: Arc<AtomicU64>,
     dropped: Arc<AtomicU64>,
@@ -58,6 +61,7 @@ impl Engine {
             fft_size: Arc::new(RwLock::new(2048)),
             frames,
             latest_measurements: Arc::new(RwLock::new(None)),
+            observations: Arc::new(std::sync::Mutex::new(VecDeque::with_capacity(4096))),
             received: Arc::new(AtomicU64::new(0)),
             frame_count: Arc::new(AtomicU64::new(0)),
             dropped: Arc::new(AtomicU64::new(0)),
@@ -205,7 +209,26 @@ impl Engine {
             if let Some(measurements) =
                 rf_dsp::analysis::measure(&bins, state.center_frequency_hz, state.sample_rate_hz)
             {
-                *self.latest_measurements.write().await = Some(measurements);
+                *self.latest_measurements.write().await = Some(measurements.clone());
+                if let Ok(mut retained) = self.observations.lock() {
+                    if retained.len() >= 4096 {
+                        retained.pop_front();
+                    }
+                    retained.push_back(observations::Observation {
+                        observed_at_unix_ns: SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map_or(0, |d| d.as_nanos() as u64),
+                        center_frequency_hz: state.center_frequency_hz,
+                        sample_rate_hz: state.sample_rate_hz,
+                        peak_frequency_hz: measurements.peak_frequency_hz,
+                        peak_dbfs: measurements.peak_dbfs,
+                        noise_floor_dbfs: measurements.noise_floor_dbfs,
+                        snr_db: measurements.snr_db,
+                        bandwidth_3db_hz: measurements.bandwidth_3db_hz,
+                        bandwidth_6db_hz: measurements.bandwidth_6db_hz,
+                        occupied_bandwidth_99_hz: measurements.occupied_bandwidth_99_hz,
+                    });
+                }
             }
             sequence += 1;
             if self
