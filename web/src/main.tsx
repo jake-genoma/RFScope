@@ -5,7 +5,7 @@ import { DevicePanel, type DeviceSelection } from "./DevicePanel";
 import { VfoPanel, type Vfo } from "./VfoPanel";
 import { AudioPlayer } from "./AudioPlayer";
 import { decodeSpectrum } from "./protocol";
-import { SpectrumRenderer, WaterfallRenderer } from "./renderers";
+import { SpectrumRenderer, WaterfallRenderer, type Marker } from "./renderers";
 import "./style.css";
 
 type Status = {
@@ -27,29 +27,31 @@ function App() {
   const [playback, setPlayback] = useState<Playback | null>(null);
   const [playbackPath, setPlaybackPath] = useState("");
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [markers, setMarkers] = useState<Marker[]>([]);
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [error, setError] = useState("");
   const selectedDevice = useRef<DeviceSelection | undefined>(undefined);
   selectedDevice.current = status?.device;
   const currentVfos = useRef<Vfo[]>([]); currentVfos.current = vfos;
+  const currentMarkers = useRef<Marker[]>([]); currentMarkers.current = markers;
   const spectrum = useRef<HTMLCanvasElement>(null), waterfall = useRef<HTMLCanvasElement>(null);
   const renderer = useRef<SpectrumRenderer | null>(null);
   const lastFrame = useRef<ReturnType<typeof decodeSpectrum> | null>(null);
   async function refresh() {
     try {
-      const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`)]);
-      if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok) throw new Error("Status request failed");
-      setStatus(await stateResponse.json() as Status); setVfos(await vfoResponse.json() as Vfo[]); setRecording(await recordingResponse.json() as Recording | null); setPlayback(await playbackResponse.json() as Playback | null); setAnalysis(await analysisResponse.json() as Analysis | null);
+      const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse, markerResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`), fetch(`${API}/markers`)]);
+      if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok || !markerResponse.ok) throw new Error("Status request failed");
+      setStatus(await stateResponse.json() as Status); setVfos(await vfoResponse.json() as Vfo[]); setRecording(await recordingResponse.json() as Recording | null); setPlayback(await playbackResponse.json() as Playback | null); setAnalysis(await analysisResponse.json() as Analysis | null); setMarkers(await markerResponse.json() as Marker[]);
     } catch (error) { setError(String(error)); }
   }
   useEffect(() => {
     let alive = true;
     const poll = async () => {
       try {
-        const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`)]);
-        if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok) throw new Error("Status request failed");
-        const state = await stateResponse.json() as Status, receivers = await vfoResponse.json() as Vfo[], currentRecording = await recordingResponse.json() as Recording | null, currentPlayback = await playbackResponse.json() as Playback | null, currentAnalysis = await analysisResponse.json() as Analysis | null;
-        if (alive) { setStatus(state); setVfos(receivers); setRecording(currentRecording); setPlayback(currentPlayback); setAnalysis(currentAnalysis); }
+        const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse, markerResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`), fetch(`${API}/markers`)]);
+        if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok || !markerResponse.ok) throw new Error("Status request failed");
+        const state = await stateResponse.json() as Status, receivers = await vfoResponse.json() as Vfo[], currentRecording = await recordingResponse.json() as Recording | null, currentPlayback = await playbackResponse.json() as Playback | null, currentAnalysis = await analysisResponse.json() as Analysis | null, currentMarkers = await markerResponse.json() as Marker[];
+        if (alive) { setStatus(state); setVfos(receivers); setRecording(currentRecording); setPlayback(currentPlayback); setAnalysis(currentAnalysis); setMarkers(currentMarkers); }
       } catch { if (alive) setError("Backend offline — run `just demo`"); }
     };
     void poll(); const timer = setInterval(() => void poll(), 1000);
@@ -62,15 +64,15 @@ function App() {
       try {
         if (selectedDevice.current && !selectedDevice.current.supports_iq_streaming) return;
         const frame = decodeSpectrum(event.data as ArrayBuffer); lastFrame.current = frame;
-        s.draw(frame.bins); s.overlays(Number(frame.centerHz), frame.sampleRateHz, currentVfos.current); w.push(frame.bins);
+        s.draw(frame.bins); s.overlays(Number(frame.centerHz), frame.sampleRateHz, currentVfos.current, currentMarkers.current); w.push(frame.bins);
       } catch (error) { setError(String(error)); }
     };
     return () => { alive = false; clearInterval(timer); ws.close(); renderer.current = null; };
   }, []);
   useEffect(() => {
     const frame = lastFrame.current;
-    if (frame && renderer.current) { renderer.current.draw(frame.bins); renderer.current.overlays(Number(frame.centerHz), frame.sampleRateHz, vfos); }
-  }, [vfos]);
+    if (frame && renderer.current) { renderer.current.draw(frame.bins); renderer.current.overlays(Number(frame.centerHz), frame.sampleRateHz, vfos, markers); }
+  }, [vfos, markers]);
   async function patch(body: object) {
     try {
       const response = await fetch(`${API}/device/state`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -87,6 +89,15 @@ function App() {
   async function playbackAction(method: "POST" | "PATCH" | "DELETE", body?: object) {
     try { const response = await fetch(`${API}/playback`, { method, headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined }); if (!response.ok && response.status !== 204) throw new Error(await response.text()); if (response.status !== 204) setPlayback(await response.json() as Playback); setError(""); }
     catch (error) { setError(String(error)); }
+  }
+  async function addPeakMarker() {
+    if (!analysis) return;
+    try {
+      const marker: Marker = { id: `marker-${Date.now()}`, frequency_hz: Math.round(analysis.peak_frequency_hz), label: "Peak", color: "#ffcf4a" };
+      const response = await fetch(`${API}/markers`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(marker) });
+      if (!response.ok) throw new Error(await response.text());
+      setMarkers([...markers, marker]);
+    } catch (error) { setError(String(error)); }
   }
   const visible = !status?.device || status.device.supports_iq_streaming;
   return <main>
@@ -118,7 +129,7 @@ function App() {
       {view === "Recordings" && <article><h3>Recordings</h3><p>{recording ? `${recording.id} · ${(recording.bytes_written / 1e6).toFixed(1)} MB · ${recording.dropped_blocks} dropped blocks` : "No active recording"}</p></article>}
       {view === "Playback" && <article><h3>Playback timeline</h3><p>{playback?.loaded ? `${playback.session_id} · ${playback.position_samples.toLocaleString()} / ${playback.total_samples.toLocaleString()} samples` : "Load a SigMF metadata file above."}</p></article>}
       {view === "Signals" && <article><h3>Signals</h3><p>Signal browser and event annotations will use persisted observations.</p></article>}
-      {view === "Analysis" && <article><h3>Analysis</h3>{analysis ? <dl>{Object.entries(analysis).map(([key, value]) => <React.Fragment key={key}><dt>{key.replaceAll("_", " ")}</dt><dd>{value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</dd></React.Fragment>)}</dl> : <p>Waiting for a spectrum frame.</p>}</article>}
+      {view === "Analysis" && <article><h3>Analysis</h3>{analysis ? <><button onClick={() => void addPeakMarker()}>Mark current peak</button><dl>{Object.entries(analysis).map(([key, value]) => <React.Fragment key={key}><dt>{key.replaceAll("_", " ")}</dt><dd>{value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</dd></React.Fragment>)}</dl><p>{markers.length} marker{markers.length === 1 ? "" : "s"} active</p></> : <p>Waiting for a spectrum frame.</p>}</article>}
       {view === "Workspaces" && <article><h3>Workspaces</h3><p>Workspace persistence is backed by the versioned SQLite store.</p></article>}
       {view === "Diagnostics" && <article><h3>Diagnostics</h3><dl>{Object.entries(status?.diagnostics ?? {}).map(([name, value]) => <React.Fragment key={name}><dt>{name.replaceAll("_", " ")}</dt><dd>{String(value)}</dd></React.Fragment>)}</dl></article>}
       {view === "Settings" && <article><h3>Settings</h3><p>Server: {API} · source: {status?.source ?? "offline"}</p></article>}

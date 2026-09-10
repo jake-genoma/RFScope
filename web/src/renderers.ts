@@ -1,8 +1,9 @@
 import type { Vfo } from "./VfoPanel";
 import { vfoBand } from "./vfo-overlay";
+export type Marker = { id: string; frequency_hz: number; label: string; color: string };
 export class SpectrumRenderer {
   private context: CanvasRenderingContext2D;
-  overlays(center: number, rate: number, vfos: Vfo[]): void {
+  overlays(center: number, rate: number, vfos: Vfo[], markers: Marker[] = []): void {
     const c = this.context, w = this.canvas.width, h = this.canvas.height;
     for (const vfo of vfos) {
       const band = vfoBand(center, rate, vfo.configuration.frequency_hz, vfo.configuration.bandwidth_hz);
@@ -11,6 +12,12 @@ export class SpectrumRenderer {
       c.strokeStyle = "#f2bc41"; c.beginPath(); c.moveTo(band.middle*w, 0); c.lineTo(band.middle*w, h); c.stroke();
       c.fillStyle = "#f2bc41"; c.font = `${12*devicePixelRatio}px sans-serif`;
       c.fillText(vfo.configuration.name, Math.max(0, Math.min(w-100*devicePixelRatio, band.middle*w+4)), 18*devicePixelRatio);
+    }
+    for (const marker of markers) {
+      const x = ((marker.frequency_hz - (center - rate / 2)) / rate) * w;
+      if (x < 0 || x > w) continue;
+      c.strokeStyle = marker.color || "#fff"; c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke();
+      c.fillStyle = marker.color || "#fff"; c.font = `${11*devicePixelRatio}px sans-serif`; c.fillText(marker.label, Math.max(0, x + 3), 34*devicePixelRatio);
     }
   }
   constructor(private canvas: HTMLCanvasElement) { const context=canvas.getContext("2d"); if (!context) throw new Error("Canvas 2D unavailable"); this.context=context; }
