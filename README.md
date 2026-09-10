@@ -25,7 +25,7 @@ Or use `just demo` and `just dev`. Run `just test` and `just check` for verifica
 
 ## HackRF status and prerequisites
 
-The HackRF feature backend is the next vertical slice and is **not yet implemented or hardware-tested**. It will use official Great Scott Gadgets `libhackrf`, never a replacement driver. Fedora development packages are typically installed with `sudo dnf install hackrf-devel`; Debian/Ubuntu use `sudo apt install libhackrf-dev hackrf`. Do not change udev rules blindly—follow distribution/Great Scott Gadgets guidance. The mock build has no libhackrf dependency.
+The optional HackRF control backend uses official Great Scott Gadgets `libhackrf` and has been tested against a locally connected HackRF Pro for enumeration, metadata, open/close, and receiver configuration. Run `cargo run -p rf-server --features hackrf` to enable it. Hardware IQ streaming is the next milestone; the live spectrum remains mock-only. See [HackRF integration](docs/hackrf.md) for the explicit hardware diagnostic and verification limits. Fedora development packages are typically installed with `sudo dnf install hackrf-devel`; Debian/Ubuntu use `sudo apt install libhackrf-dev hackrf`. Do not change udev rules blindly—follow distribution/Great Scott Gadgets guidance. The mock build has no libhackrf dependency.
 
 ## Architecture
 

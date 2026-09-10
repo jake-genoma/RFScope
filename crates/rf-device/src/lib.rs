@@ -1,4 +1,7 @@
 //! Capability-driven SDR source abstraction and deterministic mock backend.
+pub mod control;
+#[cfg(feature = "hackrf")]
+mod hackrf;
 use async_trait::async_trait;
 use num_complex::Complex32;
 use rand::{Rng, SeedableRng};
@@ -73,6 +76,7 @@ impl IqSource for MockSource {
                 step: 1,
             },
             gain_stages: vec![],
+            baseband_filter_bandwidths_hz: vec![],
             supports_sweep: false,
             max_sweep_ranges: None,
         }

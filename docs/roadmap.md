@@ -7,7 +7,9 @@
 
 ## Current: milestone 2
 
-- Isolated official libhackrf FFI feature, enumeration/open/RX/configuration, dynamic capabilities and opt-in hardware tests.
+- Completed control slice: optional official libhackrf FFI, enumeration, selected-device open/close, queried metadata, documented board capability profiles, RX configuration, generic API/UI controls and explicit hardware diagnostic.
+- Locally verified against HackRF Pro: metadata, frequency, sample rate, IF/baseband gain, filters, close/reopen. No sample reception or RF accuracy claim.
+- Next narrow slice: bounded RX callback ingestion through the shared IQ/FFT path, stop/disconnect handling, and hardware sample-integrity checks. Hardware streaming remains unimplemented.
 
 ## Next
 

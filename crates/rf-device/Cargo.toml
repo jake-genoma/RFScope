@@ -10,3 +10,11 @@ rand.workspace=true
 rand_chacha.workspace=true
 rf-types={path="../rf-types"}
 thiserror.workspace=true
+
+[features]
+default = []
+hackrf = []
+
+[[example]]
+name = "hackrf-diagnostic"
+required-features = ["hackrf"]
