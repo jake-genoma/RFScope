@@ -85,6 +85,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/recordings", get(recordings))
         .route("/api/v1/storage/recordings", get(storage_recordings))
         .route("/api/v1/detections", get(detections))
+        .route("/api/v1/markers", get(markers).post(add_marker))
+        .route("/api/v1/markers/{id}", axum::routing::delete(remove_marker))
         .route("/api/v1/stream/spectrum", get(ws))
         .route("/api/v1/stream/audio", get(ws_audio))
         .route(
@@ -235,6 +237,38 @@ async fn recordings(
 }
 async fn detections(State(_e): State<Arc<AppState>>) -> Json<Vec<serde_json::Value>> {
     Json(Vec::new())
+}
+async fn markers(State(e): State<Arc<AppState>>) -> Json<Vec<rf_types::SignalMarker>> {
+    Json(e.engine.markers.read().await.clone())
+}
+async fn add_marker(
+    State(e): State<Arc<AppState>>,
+    Json(marker): Json<rf_types::SignalMarker>,
+) -> Result<Json<rf_types::SignalMarker>, ApiError> {
+    if marker.id.trim().is_empty() || marker.frequency_hz == 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "marker id and frequency are required".into(),
+        ));
+    }
+    let mut markers = e.engine.markers.write().await;
+    if markers.iter().any(|existing| existing.id == marker.id) {
+        return Err((StatusCode::CONFLICT, "marker id already exists".into()));
+    }
+    markers.push(marker.clone());
+    Ok(Json(marker))
+}
+async fn remove_marker(
+    State(e): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let mut markers = e.engine.markers.write().await;
+    let before = markers.len();
+    markers.retain(|marker| marker.id != id);
+    if markers.len() == before {
+        return Err((StatusCode::NOT_FOUND, "marker not found".into()));
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 async fn devices(State(e): State<Arc<AppState>>) -> Result<Json<DeviceInventory>, ApiError> {
     Ok(Json(device_call(&e, |d| d.inventory()).await?))
@@ -680,6 +714,34 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(error.0, StatusCode::BAD_REQUEST);
+        e.devices.shutdown().unwrap();
+    }
+    #[tokio::test]
+    async fn markers_are_validated_and_removed() {
+        let e = state();
+        let marker = rf_types::SignalMarker {
+            id: "m1".into(),
+            frequency_hz: 100_000_000,
+            label: "carrier".into(),
+            color: "#ff0".into(),
+        };
+        assert_eq!(
+            add_marker(State(e.clone()), Json(marker.clone()))
+                .await
+                .unwrap()
+                .0,
+            marker
+        );
+        assert_eq!(markers(State(e.clone())).await.0.len(), 1);
+        assert_eq!(
+            remove_marker(State(e.clone()), Path("m1".into()))
+                .await
+                .unwrap(),
+            StatusCode::NO_CONTENT
+        );
+        assert!(remove_marker(State(e.clone()), Path("m1".into()))
+            .await
+            .is_err());
         e.devices.shutdown().unwrap();
     }
 }

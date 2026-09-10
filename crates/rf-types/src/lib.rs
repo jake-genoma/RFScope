@@ -54,6 +54,26 @@ pub struct Vfo {
     pub suspended_reason: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SignalMarker {
+    pub id: String,
+    pub frequency_hz: u64,
+    pub label: String,
+    pub color: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SignalEvent {
+    pub id: String,
+    pub start_frequency_hz: u64,
+    pub end_frequency_hz: u64,
+    pub start_time_unix_ns: u64,
+    pub end_time_unix_ns: Option<u64>,
+    pub peak_dbfs: f32,
+    pub snr_db: f32,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct DeviceDescriptor {
     pub id: String,
