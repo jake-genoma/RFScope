@@ -77,6 +77,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/metrics", get(metrics))
         .route("/api/v1/stream/spectrum", get(ws))
         .route("/api/v1/stream/audio", get(ws_audio))
+        .route(
+            "/api/v1/recording",
+            get(recording_status)
+                .post(recording_start)
+                .delete(recording_stop),
+        )
         .route("/api/v1/vfos", get(vfos).post(add_vfo))
         .route(
             "/api/v1/vfos/{id}",
@@ -134,6 +140,40 @@ async fn metrics(State(e): State<Arc<AppState>>) -> Json<rf_types::Diagnostics> 
 }
 async fn devices(State(e): State<Arc<AppState>>) -> Result<Json<DeviceInventory>, ApiError> {
     Ok(Json(device_call(&e, |d| d.inventory()).await?))
+}
+async fn recording_status(
+    State(e): State<Arc<AppState>>,
+) -> Json<Option<rf_engine::recording::RecordingSummary>> {
+    Json(e.engine.recording.status())
+}
+async fn recording_start(
+    State(e): State<Arc<AppState>>,
+) -> Result<Json<rf_engine::recording::RecordingSummary>, ApiError> {
+    let _guard = e.mutations.lock().await;
+    let status = snapshot(&e).await?;
+    let summary = e
+        .engine
+        .recording
+        .start(
+            status.state.center_frequency_hz,
+            status.state.sample_rate_hz,
+            format!(
+                "{} {}",
+                status.device.descriptor.driver, status.device.descriptor.name
+            ),
+        )
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+    Ok(Json(summary))
+}
+async fn recording_stop(
+    State(e): State<Arc<AppState>>,
+) -> Result<Json<rf_engine::recording::RecordingSummary>, ApiError> {
+    let _guard = e.mutations.lock().await;
+    e.engine
+        .recording
+        .stop()
+        .map(Json)
+        .map_err(|error| (StatusCode::SERVICE_UNAVAILABLE, error.to_string()))
 }
 async fn vfos(State(e): State<Arc<AppState>>) -> Result<Json<Vec<rf_types::Vfo>>, ApiError> {
     e.engine

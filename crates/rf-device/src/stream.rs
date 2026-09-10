@@ -13,6 +13,9 @@ use std::{
 
 pub const BLOCK_BYTES: usize = 262_144;
 pub const POOL_BLOCKS: usize = 16;
+pub trait RawIqSink: Send + Sync {
+    fn push(&self, bytes: &[u8]);
+}
 struct Block {
     bytes: Vec<u8>,
     length: usize,
@@ -35,6 +38,7 @@ pub struct StreamCounters {
 /// allocation, DSP, logging, native calls or disk I/O occurs on this path.
 pub struct Ingress {
     pool: Mutex<Pool>,
+    recording: Mutex<Option<Arc<dyn RawIqSink>>>,
     pub counters: Arc<StreamCounters>,
 }
 impl Default for Ingress {
@@ -49,12 +53,18 @@ impl Default for Ingress {
                     .collect(),
                 ready: VecDeque::with_capacity(POOL_BLOCKS),
             }),
+            recording: Mutex::new(None),
             counters: Arc::new(StreamCounters::default()),
         }
     }
 }
 impl Ingress {
     pub fn push(&self, bytes: &[u8]) {
+        if let Ok(recording) = self.recording.try_lock() {
+            if let Some(recording) = recording.as_ref() {
+                recording.push(bytes);
+            }
+        }
         self.counters.blocks.fetch_add(1, Ordering::Relaxed);
         self.counters
             .bytes
@@ -73,6 +83,11 @@ impl Ingress {
             }
         }
         self.drop_block(bytes.len());
+    }
+    pub fn set_recording(&self, sink: Option<Arc<dyn RawIqSink>>) {
+        if let Ok(mut recording) = self.recording.lock() {
+            *recording = sink;
+        }
     }
     fn drop_block(&self, bytes: usize) {
         self.counters.dropped_blocks.fetch_add(1, Ordering::Relaxed);
@@ -100,6 +115,9 @@ impl BufferedSource {
             capabilities,
             state,
         }
+    }
+    pub fn set_recording(&self, sink: Option<Arc<dyn RawIqSink>>) {
+        self.ingress.set_recording(sink);
     }
 }
 #[async_trait]

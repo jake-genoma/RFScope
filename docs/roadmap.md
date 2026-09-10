@@ -18,6 +18,8 @@ overlays are implemented; see [VFO status](vfo.md). AM/NFM/USB/LSB demodulation
 is implemented and synthetically tested; see [demodulation](demodulation.md).
 The fixed-rate Rust/browser audio pipeline is implemented; speaker playback remains
 untested because browser automation is unavailable. See [audio](audio.md).
+SigMF raw IQ recording with a bounded writer and lifecycle API is implemented; see
+[recording](recording.md).
 
 1. VFO translation/filtering, AM/NFM, 48 kHz browser audio, multiple-VFO model.
 2. Atomic SigMF recording/indexing and file playback through `IqSource`.

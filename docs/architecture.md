@@ -38,6 +38,10 @@ recording integrity. See [RX validation](rx-validation.md).
 VFO output then passes through the fixed-rate audio stage and a bounded broadcast
 PCM bus. Audio transport is downstream of IQ and cannot block ingestion.
 
+Raw IQ can also tee to the bounded SigMF writer before conversion. Its dedicated
+pool/queue is independent of display/audio; overload is explicit and recording
+completion fails rather than silently claiming a complete capture.
+
 The same complex blocks feed `VfoProcessor` before display frame selection.
 Receiver configurations are copied from a short-held registry lock; channel DSP
 state and output buffers remain local to the DSP thread. CPU admission uses a

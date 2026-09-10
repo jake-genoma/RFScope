@@ -543,6 +543,7 @@ dependencies = [
  "rand",
  "rand_chacha",
  "rf-types",
+ "serde_json",
  "thiserror",
  "tokio",
 ]
@@ -564,6 +565,8 @@ dependencies = [
  "rf-device",
  "rf-dsp",
  "rf-types",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]

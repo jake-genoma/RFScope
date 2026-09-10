@@ -10,6 +10,7 @@ rand.workspace=true
 rand_chacha.workspace=true
 rf-types={path="../rf-types"}
 thiserror.workspace=true
+serde_json.workspace=true
 
 [features]
 default = []

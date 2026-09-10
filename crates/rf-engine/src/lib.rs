@@ -1,5 +1,6 @@
 //! Shared live/file-ready IQ pipeline and spectrum wire encoder.
 pub mod audio;
+pub mod recording;
 pub mod vfo;
 use bytes::{BufMut, Bytes, BytesMut};
 use rf_device::{
@@ -19,6 +20,7 @@ use std::{
 use tokio::sync::{broadcast, RwLock};
 pub const SPECTRUM_HEADER_BYTES: usize = 48;
 pub struct Engine {
+    pub recording: Arc<recording::RecordingManager>,
     pub vfos: vfo::VfoBank,
     pub hardware: AtomicBool,
     pub shutdown: AtomicBool,
@@ -35,6 +37,9 @@ impl Engine {
     pub fn mock() -> Arc<Self> {
         let (frames, _) = broadcast::channel(4);
         Arc::new(Self {
+            recording: Arc::new(recording::RecordingManager::new(
+                std::env::var("RFSCOPE_RECORDINGS").unwrap_or_else(|_| "recordings".into()),
+            )),
             vfos: vfo::VfoBank::default(),
             hardware: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
@@ -88,6 +93,7 @@ impl Engine {
         while !self.shutdown.load(Ordering::Acquire) {
             if let Ok(mut pending) = devices.stream.lock() {
                 if let Some(source) = pending.take() {
+                    source.set_recording(self.recording.sink());
                     vfos.reset();
                     if let Ok(mut counters) = self.stream_counters.write() {
                         *counters = Some(source.ingress.counters.clone());
@@ -105,6 +111,7 @@ impl Engine {
             let size = *self.fft_size.read().await;
             let result = if hardware {
                 if let Some(source) = hardware_source.as_mut() {
+                    source.set_recording(self.recording.sink());
                     state = source.state();
                     source.read(&mut iq).await
                 } else {
