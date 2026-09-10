@@ -1,0 +1,14 @@
+[package]
+name="rf-server"
+version.workspace=true
+edition.workspace=true
+license.workspace=true
+[dependencies]
+axum.workspace=true
+futures-util.workspace=true
+rf-engine={path="../rf-engine"}
+rf-types={path="../rf-types"}
+tokio.workspace=true
+tower-http.workspace=true
+tracing.workspace=true
+tracing-subscriber.workspace=true
