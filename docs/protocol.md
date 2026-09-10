@@ -1,6 +1,7 @@
 # API and spectrum protocol
 
 Virtual-receiver endpoints and payloads are documented in [VFO API](vfo.md).
+Demodulator output diagnostics are described in [demodulation](demodulation.md).
 
 ## REST v1
 

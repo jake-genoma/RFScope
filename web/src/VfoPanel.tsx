@@ -9,6 +9,7 @@ export type VfoConfiguration = {
 export type Vfo = {
   id: string; configuration: VfoConfiguration; recording: boolean;
   output_rate_hz: number; processed_samples: number; channel_power_dbfs: number;
+  demodulated_samples: number; demodulated_peak: number;
   suspended_reason: string | null;
 };
 export function newVfo(frequency_hz: number): VfoConfiguration {
@@ -37,7 +38,7 @@ function Receiver({ vfo, refresh, report }: { vfo: Vfo; refresh: () => void; rep
     <label>Mode <select value={draft.mode} onChange={e => setDraft({ ...draft, mode: e.target.value as VfoConfiguration["mode"] })}>{["am", "nfm", "usb", "lsb"].map(mode => <option key={mode} value={mode}>{mode.toUpperCase()}</option>)}</select></label>
     <label>Bandwidth (Hz) <input aria-label="VFO bandwidth" type="number" min={500} max={100000} step={100} value={draft.bandwidth_hz} required onChange={e => setDraft({ ...draft, bandwidth_hz: Number(e.target.value) })} /></label>
     <button disabled={busy}>Apply VFO</button><button type="button" disabled={busy} onClick={() => void save(true)}>Remove</button>
-    <small>{vfo.suspended_reason ?? `${vfo.output_rate_hz.toLocaleString()} samples/s channel · ${vfo.channel_power_dbfs.toFixed(1)} dBFS · ${vfo.processed_samples.toLocaleString()} samples processed`}</small>
+    <small>{vfo.suspended_reason ?? `${vfo.output_rate_hz.toLocaleString()} samples/s channel · ${vfo.channel_power_dbfs.toFixed(1)} dBFS · ${vfo.demodulated_samples.toLocaleString()} audio samples · peak ${vfo.demodulated_peak.toFixed(2)}`}</small>
   </form>;
 }
 export function VfoPanel({ vfos, center, refresh }: { vfos: Vfo[]; center: number; refresh: () => void }) {
@@ -51,7 +52,7 @@ export function VfoPanel({ vfos, center, refresh }: { vfos: Vfo[]; center: numbe
   }
   return <section className="device-panel"><h3>Receivers / VFOs</h3>
     <button disabled={busy || !center} onClick={() => void add()}>Add VFO at center</button>
-    <p>VFO tuning stays within the captured spectrum. Channel extraction is active; demodulation and audio are the next milestones.</p>
+    <p>VFO tuning stays within the captured spectrum. AM, NFM, USB and LSB demodulation is active; browser playback is the next milestone.</p>
     {vfos.map(vfo => <Receiver key={vfo.id} vfo={vfo} refresh={refresh} report={setError} />)}
     {error && <p role="alert">{error}</p>}
   </section>;

@@ -49,7 +49,12 @@ try {
   assert.deepEqual(afterTune.device.configuration, configuration, 'VFO tuning changed hardware settings');
   assert(afterTune.diagnostics.received_bytes >= beforeTune.diagnostics.received_bytes, 'VFO tuning restarted capture');
   const receivers = await request('/vfos');
-  for (const id of createdVfos) assert(receivers.find(vfo => vfo.id === id)?.processed_samples > 0);
+  for (const id of createdVfos) {
+    const receiver = receivers.find(vfo => vfo.id === id);
+    assert(receiver?.processed_samples > 0);
+    assert(receiver.demodulated_samples > 0);
+    assert(Number.isFinite(receiver.demodulated_peak) && receiver.demodulated_peak <= 1);
+  }
   console.log(JSON.stringify({vfoTuningRetainsHardware:true, receivers, diagnostics:afterTune.diagnostics}));
   for (const id of createdVfos.splice(0)) await request(`/vfos/${id}`, {}, 204, 'DELETE');
   await request('/device/state', {center_frequency_hz:101000000});

@@ -3,6 +3,7 @@ use rf_device::{
     stream::{BufferedSource, BLOCK_BYTES},
     IqSource, MockSource,
 };
+use rf_dsp::demod::{Am, Demodulator, Nfm, Sideband, Ssb};
 use rf_dsp::{SpectrumAnalyzer, Window};
 use std::{hint::black_box, sync::atomic::Ordering, time::Instant};
 #[tokio::main(flavor = "current_thread")]
@@ -47,6 +48,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "channel_input_rate={rate} channel_MSps={:.2}",
             100.0 * output.len() as f64 / start.elapsed().as_secs_f64() / 1e6
+        );
+    }
+    let modes: Vec<(&str, Box<dyn Demodulator>)> = vec![
+        ("AM", Box::new(Am::new(62500.0)?)),
+        ("NFM", Box::new(Nfm::new(62500.0, 2500.0)?)),
+        ("USB", Box::new(Ssb::new(62500.0, Sideband::Upper)?)),
+        ("LSB", Box::new(Ssb::new(62500.0, Sideband::Lower)?)),
+    ];
+    for (mode, mut demodulator) in modes {
+        let mut audio = Vec::new();
+        let start = Instant::now();
+        for _ in 0..100 {
+            demodulator.process(black_box(&output[..4096]), black_box(&mut audio));
+        }
+        println!(
+            "demodulator={mode} MSps={:.2}",
+            409600.0 / start.elapsed().as_secs_f64() / 1e6
         );
     }
     Ok(())

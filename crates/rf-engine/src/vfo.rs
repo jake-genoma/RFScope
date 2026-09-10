@@ -1,6 +1,9 @@
 //! Low-rate receiver registry and DSP-thread-owned channel state.
-use rf_dsp::channel::Channelizer;
-use rf_types::{DeviceState, Vfo, VfoConfiguration};
+use rf_dsp::{
+    channel::Channelizer,
+    demod::{Am, Demodulator, Nfm, Sideband, Ssb},
+};
+use rf_types::{DeviceState, ReceiverMode, Vfo, VfoConfiguration};
 use std::{
     collections::BTreeMap,
     sync::RwLock,
@@ -8,6 +11,18 @@ use std::{
 };
 
 pub const DEFAULT_WORK_BUDGET: u64 = 1_000_000_000;
+fn estimated_work(rate: u32, config: &VfoConfiguration) -> u64 {
+    let mut output_rate = rate as f64;
+    while output_rate / 2.0 >= (config.bandwidth_hz as f64 * 4.0).max(48_000.0) {
+        output_rate /= 2.0;
+    }
+    let demod_work = match config.mode {
+        ReceiverMode::Am => 8,
+        ReceiverMode::Nfm => 32,
+        ReceiverMode::Usb | ReceiverMode::Lsb => Ssb::tap_count(output_rate),
+    };
+    Channelizer::estimated_work(rate, config.bandwidth_hz) + output_rate as u64 * demod_work as u64
+}
 pub struct VfoBank {
     receivers: RwLock<BTreeMap<String, Vfo>>,
     next: std::sync::atomic::AtomicU64,
@@ -57,16 +72,9 @@ impl VfoBank {
             .values()
             .filter(|v| Some(v.id.as_str()) != id)
             .fold(0u64, |sum, v| {
-                sum.saturating_add(Channelizer::estimated_work(
-                    capture.sample_rate_hz,
-                    v.configuration.bandwidth_hz,
-                ))
+                sum.saturating_add(estimated_work(capture.sample_rate_hz, &v.configuration))
             });
-        if work.saturating_add(Channelizer::estimated_work(
-            capture.sample_rate_hz,
-            config.bandwidth_hz,
-        )) > self.work_budget
-        {
+        if work.saturating_add(estimated_work(capture.sample_rate_hz, &config)) > self.work_budget {
             return Err(
                 "receiver processing budget exceeded for this sample rate/bandwidth".into(),
             );
@@ -84,6 +92,8 @@ impl VfoBank {
             recording: false,
             output_rate_hz: 0.0,
             processed_samples: receivers.get(&id).map_or(0, |v| v.processed_samples),
+            demodulated_samples: receivers.get(&id).map_or(0, |v| v.demodulated_samples),
+            demodulated_peak: 0.0,
             channel_power_dbfs: -120.0,
             suspended_reason: None,
         };
@@ -139,6 +149,8 @@ struct Runtime {
     rate: u32,
     channel: Channelizer,
     output: Vec<num_complex::Complex32>,
+    demodulator: Box<dyn Demodulator>,
+    audio: Vec<f32>,
 }
 #[derive(Default)]
 pub struct VfoProcessor {
@@ -162,7 +174,7 @@ impl VfoProcessor {
         let mut budget = bank.work_budget;
         for mut receiver in receivers {
             let config = &receiver.configuration;
-            let cost = Channelizer::estimated_work(capture.sample_rate_hz, config.bandwidth_hz);
+            let cost = estimated_work(capture.sample_rate_hz, config);
             let valid = validate(config, capture).and_then(|()| {
                 if cost > budget {
                     Err("capture rate exceeds receiver processing budget".into())
@@ -175,6 +187,7 @@ impl VfoProcessor {
                 self.channels.remove(&receiver.id);
                 receiver.suspended_reason = Some(reason);
                 receiver.output_rate_hz = 0.0;
+                receiver.demodulated_peak = 0.0;
                 bank.publish(receiver);
                 continue;
             }
@@ -193,6 +206,29 @@ impl VfoProcessor {
                 else {
                     continue;
                 };
+                let rate = channel.output_rate();
+                let demodulator: Result<Box<dyn Demodulator>, &'static str> = match config.mode {
+                    ReceiverMode::Am => Am::new(rate).map(|v| Box::new(v) as Box<dyn Demodulator>),
+                    ReceiverMode::Nfm => Nfm::new(
+                        rate,
+                        (config.bandwidth_hz as f32 / 5.0).clamp(500.0, 5000.0),
+                    )
+                    .map(|v| Box::new(v) as Box<dyn Demodulator>),
+                    ReceiverMode::Usb => {
+                        Ssb::new(rate, Sideband::Upper).map(|v| Box::new(v) as Box<dyn Demodulator>)
+                    }
+                    ReceiverMode::Lsb => {
+                        Ssb::new(rate, Sideband::Lower).map(|v| Box::new(v) as Box<dyn Demodulator>)
+                    }
+                };
+                let demodulator = match demodulator {
+                    Ok(demodulator) => demodulator,
+                    Err(error) => {
+                        receiver.suspended_reason = Some(error.into());
+                        bank.publish(receiver);
+                        continue;
+                    }
+                };
                 self.channels.insert(
                     receiver.id.clone(),
                     Runtime {
@@ -201,11 +237,19 @@ impl VfoProcessor {
                         rate: capture.sample_rate_hz,
                         channel,
                         output: Vec::new(),
+                        demodulator,
+                        audio: Vec::new(),
                     },
                 );
             }
             if let Some(runtime) = self.channels.get_mut(&receiver.id) {
                 runtime.channel.process(iq, &mut runtime.output);
+                runtime
+                    .demodulator
+                    .process(&runtime.output, &mut runtime.audio);
+                receiver.demodulated_samples += runtime.audio.len() as u64;
+                receiver.demodulated_peak =
+                    runtime.audio.iter().map(|v| v.abs()).fold(0.0, f32::max);
                 receiver.output_rate_hz = runtime.channel.output_rate();
                 receiver.processed_samples += runtime.output.len() as u64;
                 if !runtime.output.is_empty() {
@@ -235,6 +279,62 @@ mod tests {
             volume: 1.0,
             mute: false,
             solo: false,
+        }
+    }
+    #[test]
+    fn wideband_am_and_nfm_reach_normalized_demodulator_output() {
+        let capture = DeviceState {
+            center_frequency_hz: 100_000_000,
+            sample_rate_hz: 200_000,
+            running: true,
+        };
+        for mode in [ReceiverMode::Am, ReceiverMode::Nfm] {
+            let bank = VfoBank::default();
+            let mut configuration = config(capture.center_frequency_hz + 30_000);
+            configuration.mode = mode;
+            configuration.bandwidth_hz = 12_500;
+            let receiver = bank.put(None, configuration, &capture).unwrap();
+            let mut fm_phase = 0.0;
+            let input: Vec<_> = (0..50000)
+                .map(|n| {
+                    let t = n as f64 / capture.sample_rate_hz as f64;
+                    let tone = (std::f64::consts::TAU * 1000.0 * t).sin();
+                    fm_phase +=
+                        std::f64::consts::TAU * 2500.0 * 0.5 * tone / capture.sample_rate_hz as f64;
+                    let phase = std::f64::consts::TAU * 30_000.0 * t
+                        + if mode == ReceiverMode::Nfm {
+                            fm_phase
+                        } else {
+                            0.0
+                        };
+                    let magnitude = if mode == ReceiverMode::Am {
+                        0.4 * (1.0 + 0.5 * tone)
+                    } else {
+                        0.4
+                    };
+                    num_complex::Complex32::new(
+                        (magnitude * phase.cos()) as f32,
+                        (magnitude * phase.sin()) as f32,
+                    )
+                })
+                .collect();
+            let mut processor = VfoProcessor::default();
+            processor.process(&bank, &capture, &input);
+            let runtime = processor.channels.get(&receiver.id).unwrap();
+            let samples = &runtime.audio[2500..];
+            let mut i = 0.0;
+            let mut q = 0.0;
+            for (n, &sample) in samples.iter().enumerate() {
+                let phase =
+                    std::f64::consts::TAU * 1000.0 * n as f64 / runtime.channel.output_rate();
+                i += sample as f64 * phase.cos();
+                q += sample as f64 * phase.sin();
+            }
+            let recovered = 2.0 * i.hypot(q) / samples.len() as f64;
+            assert!((recovered - 0.5).abs() < 0.03, "{mode:?}: {recovered}");
+            let snapshot = &bank.list().unwrap()[0];
+            assert_eq!(snapshot.demodulated_samples, snapshot.processed_samples);
+            assert_eq!(snapshot.demodulated_samples, 12500);
         }
     }
     #[test]

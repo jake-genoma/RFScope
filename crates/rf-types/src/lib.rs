@@ -32,6 +32,8 @@ pub struct Vfo {
     pub recording: bool,
     pub output_rate_hz: f64,
     pub processed_samples: u64,
+    pub demodulated_samples: u64,
+    pub demodulated_peak: f32,
     pub channel_power_dbfs: f32,
     pub suspended_reason: Option<String>,
 }

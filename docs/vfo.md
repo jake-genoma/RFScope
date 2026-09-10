@@ -3,8 +3,9 @@
 VFOs are software channels within the selected capture. Their stable session IDs,
 names, absolute frequency, mode, nominal bandwidth, squelch, AGC, volume, mute and
 solo settings live in a low-rate registry. Recording state is read-only and false
-until receiver audio recording exists. AM/NFM/USB/LSB modes are stored; this
-milestone performs channel extraction only. Demodulation/audio follow separately.
+until receiver audio recording exists. AM/NFM/USB/LSB modes now select modular
+demodulators after channel extraction. See [demodulation](demodulation.md).
+Browser audio playback follows separately.
 
 `VfoProcessor` belongs to the DSP thread. Each receiver translates IQ with a
 persistent complex oscillator, passes it through cascaded 31-tap Blackman FIR
