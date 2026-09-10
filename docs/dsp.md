@@ -8,5 +8,6 @@ VFO processing now implements digital translation, FIR filtering and staged
 decimation. See [VFO design and tests](vfo.md). Modular demodulators, squelch and
 AGC behind a 48 kHz audio boundary are the next stages. AM/NFM/USB/LSB
 demodulators now operate on channel output; see [validation](demodulation.md).
+The fixed 48 kHz resampler and audio controls are implemented in [audio](audio.md).
 
 `IqSource::read` returns the valid sample count. Hardware transfers normalize signed bytes by 128 outside the callback. The dedicated engine drains all blocks and selects the tail FFT window of eligible blocks for display; this is a visualization sampler, not full-band continuous detection. FFT plans, window and IQ buffers are reused.

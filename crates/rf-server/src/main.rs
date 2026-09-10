@@ -76,6 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/device/state", get(status).patch(patch_state))
         .route("/api/v1/metrics", get(metrics))
         .route("/api/v1/stream/spectrum", get(ws))
+        .route("/api/v1/stream/audio", get(ws_audio))
         .route("/api/v1/vfos", get(vfos).post(add_vfo))
         .route(
             "/api/v1/vfos/{id}",
@@ -296,6 +297,37 @@ async fn patch_state(
 async fn ws(upgrade: WebSocketUpgrade, State(e): State<Arc<AppState>>) -> impl IntoResponse {
     upgrade.on_upgrade(move |socket| stream(socket, e.engine.clone()))
 }
+async fn ws_audio(upgrade: WebSocketUpgrade, State(e): State<Arc<AppState>>) -> impl IntoResponse {
+    upgrade.on_upgrade(move |socket| stream_audio(socket, e.engine.clone()))
+}
+async fn stream_audio(mut socket: WebSocket, engine: Arc<Engine>) {
+    use std::sync::atomic::Ordering;
+    struct Client(Arc<Engine>);
+    impl Drop for Client {
+        fn drop(&mut self) {
+            self.0.vfos.audio.clients.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+    engine.vfos.audio.clients.fetch_add(1, Ordering::Relaxed);
+    let _client = Client(engine.clone());
+    let mut frames = engine.vfos.audio.frames.subscribe();
+    loop {
+        tokio::select! {
+            frame=frames.recv() => match frame {
+                Ok(frame) => {
+                    if !matches!(tokio::time::timeout(std::time::Duration::from_millis(250),socket.send(Message::Binary(frame))).await,Ok(Ok(()))) { break; }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
+                    engine.vfos.audio.lagged.fetch_add(count,Ordering::Relaxed);
+                    frames=frames.resubscribe();
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            },
+            message=socket.recv() => match message { None|Some(Err(_))|Some(Ok(Message::Close(_)))=>break, _=>{} },
+            _=tokio::signal::ctrl_c()=>break,
+        }
+    }
+}
 async fn stream(mut socket: WebSocket, e: Arc<Engine>) {
     e.client_connected();
     let mut rx = e.frames.subscribe();
@@ -339,6 +371,8 @@ mod tests {
             volume: 1.0,
             mute: false,
             solo: false,
+            audio_highpass_hz: 80,
+            audio_lowpass_hz: 5000,
         };
         let receiver = add_vfo(State(e.clone()), Json(config.clone()))
             .await

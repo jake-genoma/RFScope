@@ -8,7 +8,7 @@ use num_complex::Complex32;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use rf_types::{DeviceCapabilities, DeviceDescriptor, DeviceState, NumericRange};
-use std::f32::consts::TAU;
+use std::f64::consts::TAU;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -110,17 +110,19 @@ impl IqSource for MockSource {
         Ok(())
     }
     async fn read(&mut self, output: &mut [Complex32]) -> Result<usize, DeviceError> {
-        let rate = self.state.sample_rate_hz as f32;
+        let rate = self.state.sample_rate_hz as f64;
         for (offset, sample) in output.iter_mut().enumerate() {
-            let t = (self.sample_index + offset as u64) as f32 / rate;
+            let t = (self.sample_index + offset as u64) as f64 / rate;
             let cw = (TAU * (-300_000.0) * t).sin_cos();
             let am = (1.0 + 0.55 * (TAU * 1_000.0 * t).sin()) * 0.35;
             let carrier = (TAU * 0.0 * t).sin_cos();
             let fm_phase = TAU * 400_000.0 * t + 2.2 * (TAU * 1_500.0 * t).sin();
             let fm = fm_phase.sin_cos();
             *sample = Complex32::new(
-                cw.1 * 0.22 + carrier.1 * am + fm.1 * 0.25 + self.rng.random_range(-0.025..0.025),
-                cw.0 * 0.22 + carrier.0 * am + fm.0 * 0.25 + self.rng.random_range(-0.025..0.025),
+                (cw.1 * 0.22 + carrier.1 * am + fm.1 * 0.25) as f32
+                    + self.rng.random_range(-0.025..0.025),
+                (cw.0 * 0.22 + carrier.0 * am + fm.0 * 0.25) as f32
+                    + self.rng.random_range(-0.025..0.025),
             );
         }
         self.sample_index += output.len() as u64;

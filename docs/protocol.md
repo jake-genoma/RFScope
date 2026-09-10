@@ -2,6 +2,7 @@
 
 Virtual-receiver endpoints and payloads are documented in [VFO API](vfo.md).
 Demodulator output diagnostics are described in [demodulation](demodulation.md).
+PCM audio framing and its WebSocket route are documented in [audio](audio.md).
 
 ## REST v1
 

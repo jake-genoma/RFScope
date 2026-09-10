@@ -23,6 +23,16 @@ pub struct VfoConfiguration {
     pub volume: f32,
     pub mute: bool,
     pub solo: bool,
+    #[serde(default = "default_audio_highpass")]
+    pub audio_highpass_hz: u32,
+    #[serde(default = "default_audio_lowpass")]
+    pub audio_lowpass_hz: u32,
+}
+pub fn default_audio_highpass() -> u32 {
+    80
+}
+pub fn default_audio_lowpass() -> u32 {
+    5000
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -34,6 +44,12 @@ pub struct Vfo {
     pub processed_samples: u64,
     pub demodulated_samples: u64,
     pub demodulated_peak: f32,
+    pub audio_rate_hz: u32,
+    pub audio_samples: u64,
+    pub audio_frames: u64,
+    pub audio_peak: f32,
+    pub squelch_open: bool,
+    pub audio_active: bool,
     pub channel_power_dbfs: f32,
     pub suspended_reason: Option<String>,
 }
@@ -90,6 +106,8 @@ pub struct DeviceStatePatch {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Diagnostics {
+    pub audio_clients: u64,
+    pub audio_lagged_frames: u64,
     pub stream_faults: u64,
     pub received_bytes: u64,
     pub received_blocks: u64,

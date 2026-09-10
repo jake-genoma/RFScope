@@ -6,6 +6,8 @@ solo settings live in a low-rate registry. Recording state is read-only and fals
 until receiver audio recording exists. AM/NFM/USB/LSB modes now select modular
 demodulators after channel extraction. See [demodulation](demodulation.md).
 Browser audio playback follows separately.
+Audio output is fixed at 48 kHz with per-VFO controls; transport and browser queue
+details are in [audio](audio.md).
 
 `VfoProcessor` belongs to the DSP thread. Each receiver translates IQ with a
 persistent complex oscillator, passes it through cascaded 31-tap Blackman FIR

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { API, SPECTRUM_WS } from "./api";
 import { DevicePanel, type DeviceSelection } from "./DevicePanel";
 import { VfoPanel, type Vfo } from "./VfoPanel";
+import { AudioPlayer } from "./AudioPlayer";
 import { decodeSpectrum } from "./protocol";
 import { SpectrumRenderer, WaterfallRenderer } from "./renderers";
 import "./style.css";
@@ -87,6 +88,7 @@ function App() {
       <section className="scope"><div className="title">SPECTRUM <small>dBFS</small></div><canvas ref={spectrum} /><div className="axis"><span>− BW/2</span><span>{((status?.state.center_frequency_hz ?? 0) / 1e6).toFixed(3)} MHz</span><span>+ BW/2</span></div></section>
       <section className="scope waterfall"><div className="title">WATERFALL <small>newest at top</small></div><canvas ref={waterfall} /></section>
       <VfoPanel vfos={vfos} center={status?.state.center_frequency_hz ?? 0} refresh={() => void refresh()} />
+      <AudioPlayer ids={vfos.map(vfo => vfo.id)} />
       <section className="panels"><article><h3>Signal information</h3><p>{status?.source === "mock" ? "Deterministic scene: CW −300 kHz · AM center · NFM +400 kHz" : "Live receiver · uncalibrated dBFS"}</p></article>
         <article><h3>Diagnostics</h3><dl>{Object.entries(status?.diagnostics ?? {}).map(([name, value]) => <React.Fragment key={name}><dt>{name.replaceAll("_", " ")}</dt><dd>{typeof value === "number" ? value.toLocaleString() : String(value)}</dd></React.Fragment>)}</dl></article></section>
     </div>

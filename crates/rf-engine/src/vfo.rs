@@ -1,5 +1,6 @@
 //! Low-rate receiver registry and DSP-thread-owned channel state.
 use rf_dsp::{
+    audio::{AudioControls, AudioPipeline, AUDIO_RATE},
     channel::Channelizer,
     demod::{Am, Demodulator, Nfm, Sideband, Ssb},
 };
@@ -21,9 +22,12 @@ fn estimated_work(rate: u32, config: &VfoConfiguration) -> u64 {
         ReceiverMode::Nfm => 32,
         ReceiverMode::Usb | ReceiverMode::Lsb => Ssb::tap_count(output_rate),
     };
-    Channelizer::estimated_work(rate, config.bandwidth_hz) + output_rate as u64 * demod_work as u64
+    Channelizer::estimated_work(rate, config.bandwidth_hz)
+        + output_rate as u64 * demod_work as u64
+        + AUDIO_RATE as u64 * AudioPipeline::tap_count(output_rate, config.audio_lowpass_hz) as u64
 }
 pub struct VfoBank {
+    pub audio: crate::audio::AudioBus,
     receivers: RwLock<BTreeMap<String, Vfo>>,
     next: std::sync::atomic::AtomicU64,
     session: u128,
@@ -37,6 +41,7 @@ impl Default for VfoBank {
 impl VfoBank {
     pub fn new(work_budget: u64) -> Self {
         Self {
+            audio: crate::audio::AudioBus::default(),
             receivers: RwLock::new(BTreeMap::new()),
             next: std::sync::atomic::AtomicU64::new(1),
             session: SystemTime::now()
@@ -94,6 +99,12 @@ impl VfoBank {
             processed_samples: receivers.get(&id).map_or(0, |v| v.processed_samples),
             demodulated_samples: receivers.get(&id).map_or(0, |v| v.demodulated_samples),
             demodulated_peak: 0.0,
+            audio_rate_hz: 0,
+            audio_samples: receivers.get(&id).map_or(0, |v| v.audio_samples),
+            audio_frames: receivers.get(&id).map_or(0, |v| v.audio_frames),
+            audio_peak: 0.0,
+            squelch_open: false,
+            audio_active: false,
             channel_power_dbfs: -120.0,
             suspended_reason: None,
         };
@@ -119,6 +130,12 @@ impl VfoBank {
     }
 }
 pub fn validate(config: &VfoConfiguration, capture: &DeviceState) -> Result<(), String> {
+    if !(500..=12000).contains(&config.audio_lowpass_hz)
+        || config.audio_highpass_hz > 1000
+        || config.audio_highpass_hz >= config.audio_lowpass_hz
+    {
+        return Err("audio highpass must be 0–1000 Hz and below lowpass (500–12000 Hz)".into());
+    }
     if config.name.trim().is_empty() || config.name.len() > 128 {
         return Err("receiver name must contain 1–128 bytes".into());
     }
@@ -151,12 +168,31 @@ struct Runtime {
     output: Vec<num_complex::Complex32>,
     demodulator: Box<dyn Demodulator>,
     audio: Vec<f32>,
+    audio_pipeline: AudioPipeline,
+    pcm: Vec<f32>,
+    packetizer: crate::audio::Packetizer,
 }
 #[derive(Default)]
 pub struct VfoProcessor {
     channels: BTreeMap<String, Runtime>,
 }
 impl VfoProcessor {
+    pub fn pause(&mut self, bank: &VfoBank) {
+        // NoData while hardware is running only means a transfer has not arrived.
+        // Explicit pauses are handled by the caller; clear state once, not per poll.
+        if self.channels.is_empty() {
+            return;
+        }
+        self.reset();
+        if let Ok(receivers) = bank.list() {
+            for mut receiver in receivers {
+                receiver.audio_active = false;
+                receiver.squelch_open = false;
+                receiver.audio_peak = 0.0;
+                bank.publish(receiver);
+            }
+        }
+    }
     pub fn reset(&mut self) {
         self.channels.clear();
     }
@@ -172,6 +208,7 @@ impl VfoProcessor {
         self.channels
             .retain(|id, _| receivers.iter().any(|v| &v.id == id));
         let mut budget = bank.work_budget;
+        let any_solo = receivers.iter().any(|v| v.configuration.solo);
         for mut receiver in receivers {
             let config = &receiver.configuration;
             let cost = estimated_work(capture.sample_rate_hz, config);
@@ -188,6 +225,9 @@ impl VfoProcessor {
                 receiver.suspended_reason = Some(reason);
                 receiver.output_rate_hz = 0.0;
                 receiver.demodulated_peak = 0.0;
+                receiver.audio_peak = 0.0;
+                receiver.audio_active = false;
+                receiver.squelch_open = false;
                 bank.publish(receiver);
                 continue;
             }
@@ -197,6 +237,8 @@ impl VfoProcessor {
                     || r.config.frequency_hz != config.frequency_hz
                     || r.config.bandwidth_hz != config.bandwidth_hz
                     || r.config.mode != config.mode
+                    || r.config.audio_highpass_hz != config.audio_highpass_hz
+                    || r.config.audio_lowpass_hz != config.audio_lowpass_hz
             });
             if replace {
                 let offset = (i128::from(config.frequency_hz)
@@ -229,6 +271,18 @@ impl VfoProcessor {
                         continue;
                     }
                 };
+                let audio_pipeline = match AudioPipeline::new(
+                    rate,
+                    config.audio_highpass_hz,
+                    config.audio_lowpass_hz,
+                ) {
+                    Ok(pipeline) => pipeline,
+                    Err(error) => {
+                        receiver.suspended_reason = Some(error.into());
+                        bank.publish(receiver);
+                        continue;
+                    }
+                };
                 self.channels.insert(
                     receiver.id.clone(),
                     Runtime {
@@ -239,6 +293,9 @@ impl VfoProcessor {
                         output: Vec::new(),
                         demodulator,
                         audio: Vec::new(),
+                        audio_pipeline,
+                        pcm: Vec::new(),
+                        packetizer: bank.audio.packetizer(),
                     },
                 );
             }
@@ -258,6 +315,29 @@ impl VfoProcessor {
                     receiver.channel_power_dbfs = 10.0 * power.max(1e-12).log10();
                 }
                 receiver.suspended_reason = None;
+                let audible = !config.mute && (!any_solo || config.solo);
+                runtime.audio_pipeline.process(
+                    &runtime.audio,
+                    receiver.channel_power_dbfs,
+                    AudioControls {
+                        volume: config.volume,
+                        agc: config.agc,
+                        audible,
+                        squelch_dbfs: config.squelch_dbfs,
+                    },
+                    &mut runtime.pcm,
+                );
+                receiver.audio_rate_hz = AUDIO_RATE;
+                receiver.audio_samples += runtime.pcm.len() as u64;
+                receiver.audio_peak = runtime.pcm.iter().map(|v| v.abs()).fold(0.0, f32::max);
+                receiver.squelch_open = runtime.audio_pipeline.squelch_open;
+                receiver.audio_active = audible && receiver.squelch_open;
+                let flags =
+                    u16::from(receiver.squelch_open) | (u16::from(receiver.audio_active) << 1);
+                receiver.audio_frames +=
+                    runtime
+                        .packetizer
+                        .push(&receiver.id, &runtime.pcm, flags, &bank.audio);
                 bank.publish(receiver);
             }
         }
@@ -279,6 +359,8 @@ mod tests {
             volume: 1.0,
             mute: false,
             solo: false,
+            audio_highpass_hz: 80,
+            audio_lowpass_hz: 5000,
         }
     }
     #[test]

@@ -1,4 +1,5 @@
 //! Shared live/file-ready IQ pipeline and spectrum wire encoder.
+pub mod audio;
 pub mod vfo;
 use bytes::{BufMut, Bytes, BytesMut};
 use rf_device::{
@@ -51,6 +52,8 @@ impl Engine {
         let counters = self.stream_counters.read().ok();
         let counters = counters.as_deref().and_then(|c| c.as_ref());
         Diagnostics {
+            audio_clients: self.vfos.audio.clients.load(Ordering::Relaxed),
+            audio_lagged_frames: self.vfos.audio.lagged.load(Ordering::Relaxed),
             stream_faults: counters.map_or(0, |c| c.stream_faults.load(Ordering::Relaxed)),
             received_bytes: counters.map_or(0, |c| c.bytes.load(Ordering::Relaxed)),
             received_blocks: counters.map_or(0, |c| c.blocks.load(Ordering::Relaxed)),
@@ -80,6 +83,7 @@ impl Engine {
         let mut bins = Vec::new();
         let mut vfos = vfo::VfoProcessor::default();
         let mut iq_drops = 0;
+        let mut mock_deadline = tokio::time::Instant::now();
         let mut last_frame = std::time::Instant::now();
         while !self.shutdown.load(Ordering::Acquire) {
             if let Ok(mut pending) = devices.stream.lock() {
@@ -117,13 +121,18 @@ impl Engine {
                     }
                     configured = (state.center_frequency_hz, state.sample_rate_hz);
                 }
-                mock.read(&mut iq[..size]).await
+                let count = (state.sample_rate_hz as usize / 100).clamp(size, iq.len());
+                mock.read(&mut iq[..count]).await
             } else {
                 Err(DeviceError::NoData)
             };
             let count = match result {
                 Ok(count) => count,
                 Err(DeviceError::NoData) => {
+                    mock_deadline = tokio::time::Instant::now();
+                    if !state.running {
+                        vfos.pause(&self.vfos);
+                    }
                     tokio::time::sleep(std::time::Duration::from_millis(1)).await;
                     continue;
                 }
@@ -140,9 +149,12 @@ impl Engine {
                 iq_drops = drops;
             }
             vfos.process(&self.vfos, &state, &iq[..count]);
-            if count < size
-                || (hardware && last_frame.elapsed() < std::time::Duration::from_millis(40))
-            {
+            if !hardware {
+                mock_deadline +=
+                    std::time::Duration::from_secs_f64(count as f64 / state.sample_rate_hz as f64);
+                tokio::time::sleep_until(mock_deadline).await;
+            }
+            if count < size || last_frame.elapsed() < std::time::Duration::from_millis(40) {
                 continue;
             }
             if fft.as_ref().is_none_or(|f| f.size() != size) {
@@ -169,9 +181,6 @@ impl Engine {
             }
             self.frame_count.fetch_add(1, Ordering::Relaxed);
             last_frame = std::time::Instant::now();
-            if !hardware {
-                tokio::time::sleep(std::time::Duration::from_millis(40)).await;
-            }
         }
     }
 }
