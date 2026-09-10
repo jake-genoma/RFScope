@@ -3,4 +3,5 @@ node_modules
 web/dist
 *.tsbuildinfo
 *.log
+*.sqlite3
 .DS_Store
