@@ -560,6 +560,7 @@ name = "rf-engine"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "num-complex",
  "rf-device",
  "rf-dsp",
  "rf-types",

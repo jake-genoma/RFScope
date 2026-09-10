@@ -37,5 +37,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             start.elapsed().as_secs_f64() * 1e3
         );
     }
+    for rate in [2_000_000, 20_000_000] {
+        let mut channel = rf_dsp::channel::Channelizer::new(rate, 100_000.0, 12_000)?;
+        let mut narrow = Vec::new();
+        let start = Instant::now();
+        for _ in 0..100 {
+            channel.process(black_box(&output), black_box(&mut narrow));
+        }
+        println!(
+            "channel_input_rate={rate} channel_MSps={:.2}",
+            100.0 * output.len() as f64 / start.elapsed().as_secs_f64() / 1e6
+        );
+    }
     Ok(())
 }

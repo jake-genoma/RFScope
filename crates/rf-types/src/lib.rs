@@ -1,6 +1,41 @@
 //! Stable domain and wire-adjacent types shared by RFScope services.
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReceiverMode {
+    Am,
+    Nfm,
+    Usb,
+    Lsb,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct VfoConfiguration {
+    pub name: String,
+    pub frequency_hz: u64,
+    pub mode: ReceiverMode,
+    pub bandwidth_hz: u32,
+    /// Uncalibrated channel-power threshold in dBFS; null disables squelch.
+    pub squelch_dbfs: Option<f32>,
+    pub agc: bool,
+    pub volume: f32,
+    pub mute: bool,
+    pub solo: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Vfo {
+    pub id: String,
+    pub configuration: VfoConfiguration,
+    pub recording: bool,
+    pub output_rate_hz: f64,
+    pub processed_samples: u64,
+    pub channel_power_dbfs: f32,
+    pub suspended_reason: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct DeviceDescriptor {
     pub id: String,

@@ -11,3 +11,4 @@ rf-types={path="../rf-types"}
 tokio.workspace=true
 
 tracing.workspace=true
+num-complex.workspace=true

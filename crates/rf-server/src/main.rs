@@ -1,7 +1,7 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
+        Path, State,
     },
     http::StatusCode,
     response::IntoResponse,
@@ -76,6 +76,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/device/state", get(status).patch(patch_state))
         .route("/api/v1/metrics", get(metrics))
         .route("/api/v1/stream/spectrum", get(ws))
+        .route("/api/v1/vfos", get(vfos).post(add_vfo))
+        .route(
+            "/api/v1/vfos/{id}",
+            axum::routing::patch(update_vfo).delete(remove_vfo),
+        )
         .layer(CorsLayer::permissive())
         .with_state(state.clone());
     tracing::info!(%addr,"RFScope server ready");
@@ -128,6 +133,49 @@ async fn metrics(State(e): State<Arc<AppState>>) -> Json<rf_types::Diagnostics> 
 }
 async fn devices(State(e): State<Arc<AppState>>) -> Result<Json<DeviceInventory>, ApiError> {
     Ok(Json(device_call(&e, |d| d.inventory()).await?))
+}
+async fn vfos(State(e): State<Arc<AppState>>) -> Result<Json<Vec<rf_types::Vfo>>, ApiError> {
+    e.engine
+        .vfos
+        .list()
+        .map(Json)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))
+}
+async fn add_vfo(
+    State(e): State<Arc<AppState>>,
+    Json(config): Json<rf_types::VfoConfiguration>,
+) -> Result<Json<rf_types::Vfo>, ApiError> {
+    let _guard = e.mutations.lock().await;
+    let capture = snapshot(&e).await?.state;
+    e.engine
+        .vfos
+        .put(None, config, &capture)
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error))
+}
+async fn update_vfo(
+    State(e): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(config): Json<rf_types::VfoConfiguration>,
+) -> Result<Json<rf_types::Vfo>, ApiError> {
+    let _guard = e.mutations.lock().await;
+    let capture = snapshot(&e).await?.state;
+    e.engine
+        .vfos
+        .put(Some(&id), config, &capture)
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error))
+}
+async fn remove_vfo(
+    State(e): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let _guard = e.mutations.lock().await;
+    e.engine
+        .vfos
+        .remove(&id)
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(|error| (StatusCode::NOT_FOUND, error))
 }
 async fn device_status(State(e): State<Arc<AppState>>) -> Result<Json<DeviceSelection>, ApiError> {
     Ok(Json(device_call(&e, |d| d.snapshot()).await?))
@@ -277,6 +325,58 @@ mod tests {
             devices: DeviceController::new().unwrap(),
             mutations: Mutex::new(()),
         })
+    }
+    #[tokio::test]
+    async fn vfo_edits_preserve_capture_and_invalid_changes_are_atomic() {
+        let e = state();
+        let config = rf_types::VfoConfiguration {
+            name: "test".into(),
+            frequency_hz: 100_000_000,
+            mode: rf_types::ReceiverMode::Am,
+            bandwidth_hz: 10000,
+            squelch_dbfs: None,
+            agc: true,
+            volume: 1.0,
+            mute: false,
+            solo: false,
+        };
+        let receiver = add_vfo(State(e.clone()), Json(config.clone()))
+            .await
+            .unwrap()
+            .0;
+        let mut tuned = config.clone();
+        tuned.frequency_hz += 100_000;
+        let updated = update_vfo(
+            State(e.clone()),
+            Path(receiver.id.clone()),
+            Json(tuned.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.0.id, receiver.id);
+        assert_eq!(
+            snapshot(&e).await.unwrap().state.center_frequency_hz,
+            config.frequency_hz
+        );
+        let mut invalid = tuned.clone();
+        invalid.frequency_hz += 10_000_000;
+        assert!(
+            update_vfo(State(e.clone()), Path(receiver.id.clone()), Json(invalid))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            vfos(State(e.clone())).await.unwrap().0[0].configuration,
+            tuned
+        );
+        assert_eq!(
+            remove_vfo(State(e.clone()), Path(receiver.id))
+                .await
+                .unwrap(),
+            StatusCode::NO_CONTENT
+        );
+        assert!(vfos(State(e.clone())).await.unwrap().0.is_empty());
+        e.devices.shutdown().unwrap();
     }
     #[tokio::test]
     async fn mock_api_preserves_state_on_invalid_patch() {

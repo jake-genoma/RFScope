@@ -34,3 +34,8 @@ pacing. Live hardware and mock share the spectrum analyzer and encoder.
 Recording still needs an integrity-prioritized raw branch before conversion.
 The current source pool deliberately reports overload drops and does not claim
 recording integrity. See [RX validation](rx-validation.md).
+
+The same complex blocks feed `VfoProcessor` before display frame selection.
+Receiver configurations are copied from a short-held registry lock; channel DSP
+state and output buffers remain local to the DSP thread. CPU admission uses a
+work budget rather than a fixed number of receivers. See [virtual receivers](vfo.md).

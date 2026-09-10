@@ -1,5 +1,7 @@
 # API and spectrum protocol
 
+Virtual-receiver endpoints and payloads are documented in [VFO API](vfo.md).
+
 ## REST v1
 
 - `GET /api/v1/status` and `GET /api/v1/device/state`: version, source, current state, FFT size, diagnostics.

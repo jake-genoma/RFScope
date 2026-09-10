@@ -13,6 +13,9 @@
 
 ## Next
 
+Virtual-receiver channel extraction, bounded admission, API controls and spectrum
+overlays are implemented; see [VFO status](vfo.md). Demodulation/audio are next.
+
 1. VFO translation/filtering, AM/NFM, 48 kHz browser audio, multiple-VFO model.
 2. Atomic SigMF recording/indexing and file playback through `IqSource`.
 3. Signal measurements/events, SQLite + Parquet/DuckDB and useful rfscopeR queries.

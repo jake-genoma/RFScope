@@ -1,4 +1,5 @@
 //! Shared live/file-ready IQ pipeline and spectrum wire encoder.
+pub mod vfo;
 use bytes::{BufMut, Bytes, BytesMut};
 use rf_device::{
     control::DeviceController,
@@ -17,6 +18,7 @@ use std::{
 use tokio::sync::{broadcast, RwLock};
 pub const SPECTRUM_HEADER_BYTES: usize = 48;
 pub struct Engine {
+    pub vfos: vfo::VfoBank,
     pub hardware: AtomicBool,
     pub shutdown: AtomicBool,
     stream_counters: std::sync::RwLock<Option<Arc<StreamCounters>>>,
@@ -32,6 +34,7 @@ impl Engine {
     pub fn mock() -> Arc<Self> {
         let (frames, _) = broadcast::channel(4);
         Arc::new(Self {
+            vfos: vfo::VfoBank::default(),
             hardware: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
             stream_counters: std::sync::RwLock::new(None),
@@ -75,10 +78,13 @@ impl Engine {
         let mut fft: Option<SpectrumAnalyzer> = None;
         let mut iq = vec![Default::default(); BLOCK_BYTES / 2];
         let mut bins = Vec::new();
+        let mut vfos = vfo::VfoProcessor::default();
+        let mut iq_drops = 0;
         let mut last_frame = std::time::Instant::now();
         while !self.shutdown.load(Ordering::Acquire) {
             if let Ok(mut pending) = devices.stream.lock() {
                 if let Some(source) = pending.take() {
+                    vfos.reset();
                     if let Ok(mut counters) = self.stream_counters.write() {
                         *counters = Some(source.ingress.counters.clone());
                     }
@@ -128,6 +134,12 @@ impl Engine {
                 }
             };
             self.received.fetch_add(count as u64, Ordering::Relaxed);
+            let drops = self.diagnostics().dropped_iq_blocks;
+            if drops != iq_drops {
+                vfos.reset();
+                iq_drops = drops;
+            }
+            vfos.process(&self.vfos, &state, &iq[..count]);
             if count < size
                 || (hardware && last_frame.elapsed() < std::time::Duration::from_millis(40))
             {

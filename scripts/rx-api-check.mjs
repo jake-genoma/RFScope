@@ -1,8 +1,8 @@
 // Explicit hardware test against an isolated local server. Node 22+, no dependencies.
 import assert from 'node:assert/strict';
 const base = process.env.RFSCOPE_API ?? 'http://127.0.0.1:8788/api/v1';
-async function request(path, body, expected = 200) {
-  const response = await fetch(base + path, body === undefined ? undefined : {method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify(body)});
+async function request(path, body, expected = 200, method = 'PATCH') {
+  const response = await fetch(base + path, body === undefined ? undefined : {method, headers: {'content-type':'application/json'}, body: JSON.stringify(body)});
   const text = await response.text();
   assert.equal(response.status, expected, text);
   return expected === 200 ? JSON.parse(text) : text;
@@ -12,6 +12,7 @@ const labels = new Set();
 const socket = new WebSocket(base.replace('http', 'ws') + '/stream/spectrum');
 socket.binaryType = 'arraybuffer';
 let failure;
+const createdVfos = [];
 socket.onmessage = ({data}) => {
   try {
     const view = new DataView(data);
@@ -34,6 +35,23 @@ try {
   let status = await request('/device/state', {running:true});
   assert(status.state.running);
   await pause(1000);
+  const configuration = status.device.configuration;
+  const vfoConfig = {name:'RX verification', frequency_hz:100000000, mode:'am', bandwidth_hz:10000, squelch_dbfs:null, agc:true, volume:1, mute:false, solo:false};
+  for (const offset of [0,100000]) {
+    const vfo = await request('/vfos', {...vfoConfig, frequency_hz:vfoConfig.frequency_hz+offset}, 200, 'POST');
+    createdVfos.push(vfo.id);
+  }
+  await pause(1000);
+  const beforeTune = await request('/status');
+  await request(`/vfos/${createdVfos[0]}`, {...vfoConfig, frequency_hz:100050000, bandwidth_hz:12000, mode:'nfm'});
+  await pause(500);
+  const afterTune = await request('/status');
+  assert.deepEqual(afterTune.device.configuration, configuration, 'VFO tuning changed hardware settings');
+  assert(afterTune.diagnostics.received_bytes >= beforeTune.diagnostics.received_bytes, 'VFO tuning restarted capture');
+  const receivers = await request('/vfos');
+  for (const id of createdVfos) assert(receivers.find(vfo => vfo.id === id)?.processed_samples > 0);
+  console.log(JSON.stringify({vfoTuningRetainsHardware:true, receivers, diagnostics:afterTune.diagnostics}));
+  for (const id of createdVfos.splice(0)) await request(`/vfos/${id}`, {}, 204, 'DELETE');
   await request('/device/state', {center_frequency_hz:101000000});
   await pause(500);
   await request('/device/state', {sample_rate_hz:10000000});
@@ -58,6 +76,7 @@ try {
   if(failure) throw failure;
   console.log(JSON.stringify({frames, labels:[...labels], diagnostics:status.diagnostics}));
 } finally {
+  for (const id of createdVfos) await request(`/vfos/${id}`, {}, 204, 'DELETE');
   await request('/device/control', {action:'close'});
   await request('/device/control', {action:'select', id:'mock-0'});
   await request('/device/state', {running:true});

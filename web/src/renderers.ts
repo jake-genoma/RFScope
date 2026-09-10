@@ -1,5 +1,18 @@
+import type { Vfo } from "./VfoPanel";
+import { vfoBand } from "./vfo-overlay";
 export class SpectrumRenderer {
   private context: CanvasRenderingContext2D;
+  overlays(center: number, rate: number, vfos: Vfo[]): void {
+    const c = this.context, w = this.canvas.width, h = this.canvas.height;
+    for (const vfo of vfos) {
+      const band = vfoBand(center, rate, vfo.configuration.frequency_hz, vfo.configuration.bandwidth_hz);
+      if (!band) continue;
+      c.fillStyle = "#f2bc4130"; c.fillRect(band.left*w, 0, Math.max(2, (band.right-band.left)*w), h);
+      c.strokeStyle = "#f2bc41"; c.beginPath(); c.moveTo(band.middle*w, 0); c.lineTo(band.middle*w, h); c.stroke();
+      c.fillStyle = "#f2bc41"; c.font = `${12*devicePixelRatio}px sans-serif`;
+      c.fillText(vfo.configuration.name, Math.max(0, Math.min(w-100*devicePixelRatio, band.middle*w+4)), 18*devicePixelRatio);
+    }
+  }
   constructor(private canvas: HTMLCanvasElement) { const context=canvas.getContext("2d"); if (!context) throw new Error("Canvas 2D unavailable"); this.context=context; }
   draw(bins: Float32Array): void { const {canvas,context:c}=this; const dpr=devicePixelRatio; const w=Math.floor(canvas.clientWidth*dpr),h=Math.floor(canvas.clientHeight*dpr); if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h}c.fillStyle="#071018";c.fillRect(0,0,w,h);c.strokeStyle="#123448";c.lineWidth=1;for(let i=1;i<5;i++){c.beginPath();c.moveTo(0,h*i/5);c.lineTo(w,h*i/5);c.stroke()}c.strokeStyle="#42d9ff";c.lineWidth=1.5*dpr;c.beginPath();for(let i=0;i<bins.length;i++){const x=i*w/(bins.length-1);const y=Math.max(0,Math.min(h,h-(bins[i]+120)*h/120));i?c.lineTo(x,y):c.moveTo(x,y)}c.stroke();}
 }
