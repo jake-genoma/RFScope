@@ -8,93 +8,275 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use rf_device::control::{ControlError, DeviceController};
 use rf_engine::Engine;
-use rf_types::{DeviceStatePatch, Status};
+use rf_types::{DeviceCommand, DeviceInventory, DeviceSelection, DeviceStatePatch, Status};
 use std::{net::SocketAddr, sync::Arc};
+use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
+struct AppState {
+    engine: Arc<Engine>,
+    devices: DeviceController,
+    mutations: Mutex<()>,
+}
+type ApiError = (StatusCode, String);
+fn api_error(error: ControlError) -> ApiError {
+    let code = match error {
+        ControlError::Invalid(_) => StatusCode::BAD_REQUEST,
+        ControlError::Conflict(_) => StatusCode::CONFLICT,
+        _ => StatusCode::SERVICE_UNAVAILABLE,
+    };
+    (code, error.to_string())
+}
+async fn device_call<T: Send + 'static>(
+    state: &AppState,
+    call: impl FnOnce(DeviceController) -> rf_device::control::Result<T> + Send + 'static,
+) -> Result<T, ApiError> {
+    let devices = state.devices.clone();
+    tokio::task::spawn_blocking(move || call(devices))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(api_error)
+}
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let engine = Engine::mock();
     tokio::spawn(engine.clone().run());
+    let state = Arc::new(AppState {
+        engine,
+        devices: DeviceController::new()?,
+        mutations: Mutex::new(()),
+    });
     let app = Router::new()
+        .route("/api/v1/devices", get(devices))
+        .route("/api/v1/device/control", get(device_status).patch(control))
         .route("/api/v1/status", get(status))
         .route("/api/v1/device/state", get(status).patch(patch_state))
         .route("/api/v1/metrics", get(metrics))
         .route("/api/v1/stream/spectrum", get(ws))
         .layer(CorsLayer::permissive())
-        .with_state(engine);
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8787));
-    tracing::info!(%addr,"RFScope mock server ready");
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .expect("localhost port must be bindable");
+        .with_state(state.clone());
+    let port = std::env::var("RFSCOPE_PORT")
+        .unwrap_or_else(|_| "8787".into())
+        .parse::<u16>()?;
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    tracing::info!(%addr,"RFScope server ready");
+    let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })
+        .await?;
+    device_call(&state, |d| d.shutdown())
         .await
-        .expect("server runtime failed");
+        .map_err(|(_, message)| message)?;
+    Ok(())
 }
-async fn status(State(e): State<Arc<Engine>>) -> Json<Status> {
-    let state = e.state.read().await.clone();
-    let fft_size = *e.fft_size.read().await;
-    Json(Status {
+async fn snapshot(e: &AppState) -> Result<Status, ApiError> {
+    let device = device_call(e, |d| d.snapshot()).await?;
+    let mut state = e.engine.state.read().await.clone();
+    if !device.supports_iq_streaming {
+        state.running = false;
+        state.center_frequency_hz = device
+            .configuration
+            .as_ref()
+            .map_or(0, |c| c.center_frequency_hz);
+        state.sample_rate_hz = device
+            .configuration
+            .as_ref()
+            .map_or(0, |c| c.sample_rate_hz);
+    }
+    Ok(Status {
         name: "RFScope",
         version: env!("CARGO_PKG_VERSION"),
-        source: "mock",
+        source: device.descriptor.driver.clone(),
+        device,
         state,
-        fft_size,
-        diagnostics: e.diagnostics(),
+        fft_size: *e.engine.fft_size.read().await,
+        diagnostics: e.engine.diagnostics(),
     })
 }
-async fn metrics(State(e): State<Arc<Engine>>) -> Json<rf_types::Diagnostics> {
-    Json(e.diagnostics())
+async fn status(State(e): State<Arc<AppState>>) -> Result<Json<Status>, ApiError> {
+    let _guard = e.mutations.lock().await;
+    Ok(Json(snapshot(&e).await?))
+}
+async fn metrics(State(e): State<Arc<AppState>>) -> Json<rf_types::Diagnostics> {
+    Json(e.engine.diagnostics())
+}
+async fn devices(State(e): State<Arc<AppState>>) -> Result<Json<DeviceInventory>, ApiError> {
+    Ok(Json(device_call(&e, |d| d.inventory()).await?))
+}
+async fn device_status(State(e): State<Arc<AppState>>) -> Result<Json<DeviceSelection>, ApiError> {
+    Ok(Json(device_call(&e, |d| d.snapshot()).await?))
+}
+async fn control(
+    State(e): State<Arc<AppState>>,
+    Json(command): Json<DeviceCommand>,
+) -> Result<Json<Status>, ApiError> {
+    let _guard = e.mutations.lock().await;
+    // Pause before native selection so a cancelled HTTP request cannot leave mock IQ
+    // running underneath a hardware selection that completes on the worker.
+    if matches!(&command, DeviceCommand::Select { id } if id != "mock-0") {
+        e.engine.state.write().await.running = false;
+    }
+    let selected = device_call(&e, move |d| d.command(command)).await?;
+    if !selected.supports_iq_streaming {
+        e.engine.state.write().await.running = false;
+    }
+    Ok(Json(snapshot(&e).await?))
 }
 async fn patch_state(
-    State(e): State<Arc<Engine>>,
+    State(e): State<Arc<AppState>>,
     Json(p): Json<DeviceStatePatch>,
-) -> Result<Json<Status>, (StatusCode, String)> {
-    if let Some(size) = p.fft_size {
-        if !(1024..=65536).contains(&size) || !size.is_power_of_two() {
+) -> Result<Json<Status>, ApiError> {
+    let _guard = e.mutations.lock().await;
+    let selected = device_call(&e, |d| d.snapshot()).await?;
+    if !selected.supports_iq_streaming {
+        if p.running.is_some() || p.fft_size.is_some() {
+            return Err((StatusCode::BAD_REQUEST, "IQ streaming is not implemented for this device; use device/control open or close for ownership".into()));
+        }
+        let mut configuration = selected.configuration.ok_or_else(|| {
+            (
+                StatusCode::CONFLICT,
+                "open the selected device first".into(),
+            )
+        })?;
+        if let Some(v) = p.center_frequency_hz {
+            configuration.center_frequency_hz = v;
+        }
+        if let Some(v) = p.sample_rate_hz {
+            configuration.sample_rate_hz = v;
+        }
+        if let Some(v) = p.gains {
+            configuration.gains = v;
+        }
+        if let Some(v) = p.baseband_filter_bandwidth_hz {
+            configuration.baseband_filter_bandwidth_hz = v;
+        }
+        device_call(&e, move |d| {
+            d.command(DeviceCommand::Configure { configuration })
+        })
+        .await?;
+    } else {
+        if p.gains.is_some() || p.baseband_filter_bandwidth_hz.is_some() {
             return Err((
                 StatusCode::BAD_REQUEST,
-                "fft_size must be a power of two from 1024 through 65536".into(),
+                "mock has no hardware gain or filter controls".into(),
             ));
         }
-        *e.fft_size.write().await = size;
-    }
-    let mut s = e.state.write().await;
-    if let Some(v) = p.center_frequency_hz {
-        s.center_frequency_hz = v
-    }
-    if let Some(v) = p.sample_rate_hz {
-        if !(200_000..=20_000_000).contains(&v) {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                "sample rate outside mock capabilities".into(),
-            ));
+        if let Some(size) = p.fft_size {
+            if !(1024..=65536).contains(&size) || !size.is_power_of_two() {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "fft_size must be a power of two from 1024 through 65536".into(),
+                ));
+            }
         }
-        s.sample_rate_hz = v
+        let mut next = e.engine.state.read().await.clone();
+        if let Some(v) = p.center_frequency_hz {
+            next.center_frequency_hz = v;
+        }
+        if let Some(v) = p.sample_rate_hz {
+            next.sample_rate_hz = v;
+        }
+        // Validate with the existing source capability implementation before changing shared state.
+        use rf_device::IqSource;
+        rf_device::MockSource::default()
+            .configure(next.center_frequency_hz, next.sample_rate_hz)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+        if let Some(v) = p.running {
+            next.running = v;
+        }
+        *e.engine.state.write().await = next;
+        if let Some(size) = p.fft_size {
+            *e.engine.fft_size.write().await = size;
+        }
     }
-    if let Some(v) = p.running {
-        s.running = v
-    }
-    drop(s);
-    Ok(status(State(e)).await)
+    Ok(Json(snapshot(&e).await?))
 }
-async fn ws(upgrade: WebSocketUpgrade, State(e): State<Arc<Engine>>) -> impl IntoResponse {
-    upgrade.on_upgrade(move |socket| stream(socket, e))
+async fn ws(upgrade: WebSocketUpgrade, State(e): State<Arc<AppState>>) -> impl IntoResponse {
+    upgrade.on_upgrade(move |socket| stream(socket, e.engine.clone()))
 }
 async fn stream(mut socket: WebSocket, e: Arc<Engine>) {
     e.client_connected();
     let mut rx = e.frames.subscribe();
-    while let Ok(frame) = rx.recv().await {
-        if socket.send(Message::Binary(frame)).await.is_err() {
-            break;
+    loop {
+        tokio::select! {
+            frame = rx.recv() => match frame {
+                Ok(frame) => if socket.send(Message::Binary(frame)).await.is_err() { break; },
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            },
+            message = socket.recv() => match message {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
+                _ => {},
+            },
+            _ = tokio::signal::ctrl_c() => break,
         }
     }
     e.client_disconnected();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn state() -> Arc<AppState> {
+        Arc::new(AppState {
+            engine: Engine::mock(),
+            devices: DeviceController::new().unwrap(),
+            mutations: Mutex::new(()),
+        })
+    }
+    #[tokio::test]
+    async fn mock_api_preserves_state_on_invalid_patch() {
+        let e = state();
+        let result = patch_state(
+            State(e.clone()),
+            Json(DeviceStatePatch {
+                center_frequency_hz: Some(101_000_000),
+                sample_rate_hz: Some(1),
+                fft_size: Some(4096),
+                ..Default::default()
+            }),
+        )
+        .await;
+        assert_eq!(result.unwrap_err().0, StatusCode::BAD_REQUEST);
+        let s = status(State(e.clone())).await.unwrap().0;
+        assert_eq!(s.state.center_frequency_hz, 100_000_000);
+        assert_eq!(s.fft_size, 2048);
+        assert_eq!(s.source, "mock");
+        assert!(s.device.supports_iq_streaming);
+        e.devices.shutdown().unwrap();
+    }
+    #[tokio::test]
+    async fn mock_api_controls_and_hardware_rejection() {
+        let e = state();
+        let s = patch_state(
+            State(e.clone()),
+            Json(DeviceStatePatch {
+                running: Some(false),
+                center_frequency_hz: Some(101_000_000),
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert!(!s.state.running);
+        assert_eq!(s.state.center_frequency_hz, 101_000_000);
+        let error = patch_state(
+            State(e.clone()),
+            Json(DeviceStatePatch {
+                gains: Some(Default::default()),
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.0, StatusCode::BAD_REQUEST);
+        e.devices.shutdown().unwrap();
+    }
 }

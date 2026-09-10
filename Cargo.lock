@@ -571,6 +571,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "futures-util",
+ "rf-device",
  "rf-engine",
  "rf-types",
  "tokio",
