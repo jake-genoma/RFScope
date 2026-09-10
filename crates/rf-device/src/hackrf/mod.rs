@@ -1,7 +1,9 @@
 //! Safe, thread-confined ownership over the official C library. All unsafe use stays here.
 mod ffi;
 use crate::control::{validate_configuration, ControlError, ReceiverControl, Result};
+use crate::stream::{BufferedSource, Ingress};
 use rf_types::*;
+use std::sync::Arc;
 use std::{
     collections::BTreeMap,
     ffi::{CStr, CString},
@@ -119,9 +121,10 @@ impl Library {
             pointer: Some(pointer),
             _library: self.clone(),
             selection: None,
+            ingress: None,
         };
         receiver.selection = Some(receiver.query(id)?);
-        // Establish explicit safe defaults, including antenna power disabled. No RX/TX start is bound.
+        // Establish explicit safe defaults, including antenna power disabled. RX remains stopped until explicitly requested.
         let config = ReceiverConfiguration {
             center_frequency_hz: 100_000_000,
             sample_rate_hz: 8_000_000,
@@ -166,6 +169,7 @@ pub(crate) struct Receiver {
     pointer: Option<NonNull<ffi::Device>>,
     _library: Rc<Library>,
     selection: Option<DeviceSelection>,
+    ingress: Option<Arc<Ingress>>,
 }
 impl Receiver {
     fn pointer(&self) -> Result<*mut ffi::Device> {
@@ -253,7 +257,8 @@ impl Receiver {
             capabilities: capabilities(board)?,
             metadata,
             opened: true,
-            supports_iq_streaming: false,
+            running: false,
+            supports_iq_streaming: true,
             configuration: None,
         })
     }
@@ -261,9 +266,12 @@ impl Receiver {
 impl ReceiverControl for Receiver {
     fn snapshot(&self) -> DeviceSelection {
         // Impossibility: only Library::open constructs Receiver; it sets selection before returning it.
-        self.selection
+        let mut selection = self
+            .selection
             .clone()
-            .expect("successfully opened receiver has metadata")
+            .expect("successfully opened receiver has metadata");
+        selection.running = self.running();
+        selection
     }
     fn configure(&mut self, config: ReceiverConfiguration) -> Result<()> {
         let selection = self
@@ -309,14 +317,88 @@ impl ReceiverControl for Receiver {
         }
         Ok(())
     }
+    fn start(&mut self) -> Result<BufferedSource> {
+        self.stop()?;
+        let selection = self.snapshot();
+        let config = selection
+            .configuration
+            .ok_or_else(|| ControlError::Conflict("receiver not configured".into()))?;
+        let source = BufferedSource::new(
+            selection.descriptor,
+            selection.capabilities,
+            DeviceState {
+                center_frequency_hz: config.center_frequency_hz,
+                sample_rate_hz: config.sample_rate_hz,
+                running: true,
+            },
+        );
+        self.ingress = Some(source.ingress.clone());
+        source
+            .ingress
+            .counters
+            .running
+            .store(true, Ordering::Release);
+        // SAFETY: Arc allocation remains owned by Receiver until stop/close joins native callbacks.
+        let result = check("hackrf_start_rx", unsafe {
+            ffi::hackrf_start_rx(
+                self.pointer()?,
+                receive,
+                Arc::as_ptr(&source.ingress) as *mut std::ffi::c_void,
+            )
+        });
+        if let Err(error) = result {
+            source
+                .ingress
+                .counters
+                .running
+                .store(false, Ordering::Release);
+            // Retain callback storage until native stop/close even on partial start failure.
+            return Err(error);
+        }
+        Ok(source)
+    }
+    fn running(&self) -> bool {
+        self.ingress
+            .as_ref()
+            .is_some_and(|i| i.counters.running.load(Ordering::Acquire))
+    }
+    fn check_health(&mut self) {
+        if self.running() {
+            if let Some(pointer) = self.pointer {
+                // SAFETY: live handle on its owning thread; read-only native health query.
+                if unsafe { ffi::hackrf_is_streaming(pointer.as_ptr()) } != 1 {
+                    if let Some(ingress) = &self.ingress {
+                        ingress
+                            .counters
+                            .stream_faults
+                            .fetch_add(1, Ordering::Relaxed);
+                        ingress.counters.running.store(false, Ordering::Release);
+                    }
+                }
+            }
+        }
+    }
+    fn stop(&mut self) -> Result<()> {
+        if let Some(ingress) = &self.ingress {
+            ingress.counters.running.store(false, Ordering::Release);
+            // SAFETY: native stop cancels transfers and joins callback thread before returning.
+            check("hackrf_stop_rx", unsafe {
+                ffi::hackrf_stop_rx(self.pointer()?)
+            })?;
+            self.ingress = None;
+        }
+        Ok(())
+    }
     fn close(&mut self) -> Result<()> {
+        let stop = self.stop();
         if let Some(pointer) = self.pointer.take() {
             // SAFETY: unique handle consumed exactly once; libhackrf frees it even if teardown reports error.
             check("hackrf_close", unsafe {
                 ffi::hackrf_close(pointer.as_ptr())
             })?;
         }
-        Ok(())
+        self.ingress = None;
+        stop
     }
 }
 impl Drop for Receiver {
@@ -396,6 +478,33 @@ fn capabilities(board: u8) -> Result<DeviceCapabilities> {
         supports_sweep: false,
         max_sweep_ranges: None,
     })
+}
+
+// SAFETY: libhackrf supplies a valid transfer for this call only; rx_ctx points to
+// the Arc-owned Ingress retained until native stop/close joins callbacks.
+unsafe extern "C" fn receive(transfer: *mut ffi::Transfer) -> std::ffi::c_int {
+    if transfer.is_null() {
+        return -1;
+    }
+    let transfer = unsafe { &*transfer };
+    if transfer.rx_ctx.is_null() {
+        return -1;
+    }
+    let ingress = unsafe { &*transfer.rx_ctx.cast::<Ingress>() };
+    if transfer.buffer.is_null()
+        || transfer.valid_length < 0
+        || transfer.valid_length > transfer.buffer_length
+    {
+        ingress
+            .counters
+            .invalid_blocks
+            .fetch_add(1, Ordering::Relaxed);
+        return -1;
+    }
+    let bytes =
+        unsafe { std::slice::from_raw_parts(transfer.buffer, transfer.valid_length as usize) };
+    ingress.push(bytes);
+    0
 }
 
 #[cfg(test)]

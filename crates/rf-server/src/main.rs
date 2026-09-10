@@ -43,11 +43,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+    let port = std::env::var("RFSCOPE_PORT")
+        .unwrap_or_else(|_| "8787".into())
+        .parse::<u16>()?;
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let listener = tokio::net::TcpListener::bind(addr).await?;
     let engine = Engine::mock();
-    tokio::spawn(engine.clone().run());
+    let controller = DeviceController::new()?;
+    let dsp_engine = engine.clone();
+    let dsp_devices = controller.clone();
+    // Dedicated DSP thread keeps CPU processing outside the network runtime.
+    let dsp_thread = std::thread::Builder::new()
+        .name("sdr-dsp".into())
+        .spawn(move || {
+            match tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+            {
+                Ok(runtime) => runtime.block_on(dsp_engine.run(dsp_devices)),
+                Err(error) => tracing::error!(%error, "DSP runtime failed"),
+            }
+        })?;
     let state = Arc::new(AppState {
         engine,
-        devices: DeviceController::new()?,
+        devices: controller,
         mutations: Mutex::new(()),
     });
     let app = Router::new()
@@ -59,27 +78,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/stream/spectrum", get(ws))
         .layer(CorsLayer::permissive())
         .with_state(state.clone());
-    let port = std::env::var("RFSCOPE_PORT")
-        .unwrap_or_else(|_| "8787".into())
-        .parse::<u16>()?;
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
     tracing::info!(%addr,"RFScope server ready");
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app)
+    let served = axum::serve(listener, app)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })
-        .await?;
+        .await;
+    state
+        .engine
+        .shutdown
+        .store(true, std::sync::atomic::Ordering::Release);
+    dsp_thread.join().map_err(|_| "DSP thread panicked")?;
     device_call(&state, |d| d.shutdown())
         .await
         .map_err(|(_, message)| message)?;
+    served?;
     Ok(())
 }
 async fn snapshot(e: &AppState) -> Result<Status, ApiError> {
     let device = device_call(e, |d| d.snapshot()).await?;
     let mut state = e.engine.state.read().await.clone();
-    if !device.supports_iq_streaming {
-        state.running = false;
+    if device.descriptor.driver != "mock" {
+        state.running = device.running;
         state.center_frequency_hz = device
             .configuration
             .as_ref()
@@ -121,11 +141,15 @@ async fn control(
     // running underneath a hardware selection that completes on the worker.
     if matches!(&command, DeviceCommand::Select { id } if id != "mock-0") {
         e.engine.state.write().await.running = false;
+        e.engine
+            .hardware
+            .store(true, std::sync::atomic::Ordering::Release);
     }
     let selected = device_call(&e, move |d| d.command(command)).await?;
-    if !selected.supports_iq_streaming {
-        e.engine.state.write().await.running = false;
-    }
+    e.engine.hardware.store(
+        selected.descriptor.driver != "mock",
+        std::sync::atomic::Ordering::Release,
+    );
     Ok(Json(snapshot(&e).await?))
 }
 async fn patch_state(
@@ -134,10 +158,19 @@ async fn patch_state(
 ) -> Result<Json<Status>, ApiError> {
     let _guard = e.mutations.lock().await;
     let selected = device_call(&e, |d| d.snapshot()).await?;
-    if !selected.supports_iq_streaming {
-        if p.running.is_some() || p.fft_size.is_some() {
-            return Err((StatusCode::BAD_REQUEST, "IQ streaming is not implemented for this device; use device/control open or close for ownership".into()));
+    if let Some(size) = p.fft_size {
+        if !(1024..=65536).contains(&size) || !size.is_power_of_two() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "fft_size must be a power of two from 1024 through 65536".into(),
+            ));
         }
+    }
+    if selected.descriptor.driver != "mock" {
+        let reconfigure = p.center_frequency_hz.is_some()
+            || p.sample_rate_hz.is_some()
+            || p.gains.is_some()
+            || p.baseband_filter_bandwidth_hz.is_some();
         let mut configuration = selected.configuration.ok_or_else(|| {
             (
                 StatusCode::CONFLICT,
@@ -156,10 +189,25 @@ async fn patch_state(
         if let Some(v) = p.baseband_filter_bandwidth_hz {
             configuration.baseband_filter_bandwidth_hz = v;
         }
-        device_call(&e, move |d| {
-            d.command(DeviceCommand::Configure { configuration })
-        })
-        .await?;
+        if reconfigure {
+            device_call(&e, move |d| {
+                d.command(DeviceCommand::Configure { configuration })
+            })
+            .await?;
+        }
+        if let Some(running) = p.running {
+            device_call(&e, move |d| {
+                d.command(if running {
+                    DeviceCommand::Start
+                } else {
+                    DeviceCommand::Stop
+                })
+            })
+            .await?;
+        }
+        if let Some(size) = p.fft_size {
+            *e.engine.fft_size.write().await = size;
+        }
     } else {
         if p.gains.is_some() || p.baseband_filter_bandwidth_hz.is_some() {
             return Err((

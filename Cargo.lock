@@ -544,6 +544,7 @@ dependencies = [
  "rand_chacha",
  "rf-types",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -563,6 +564,7 @@ dependencies = [
  "rf-dsp",
  "rf-types",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

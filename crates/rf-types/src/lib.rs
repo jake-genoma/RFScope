@@ -53,6 +53,13 @@ pub struct DeviceStatePatch {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Diagnostics {
+    pub stream_faults: u64,
+    pub received_bytes: u64,
+    pub received_blocks: u64,
+    pub dropped_iq_blocks: u64,
+    pub dropped_iq_bytes: u64,
+    pub invalid_iq_blocks: u64,
+    pub hardware_streaming: bool,
     pub received_samples: u64,
     pub fft_frames: u64,
     pub dropped_visualization_frames: u64,
@@ -86,6 +93,7 @@ pub struct DeviceSelection {
     pub capabilities: DeviceCapabilities,
     pub metadata: std::collections::BTreeMap<String, String>,
     pub opened: bool,
+    pub running: bool,
     pub supports_iq_streaming: bool,
     pub configuration: Option<ReceiverConfiguration>,
 }
@@ -104,6 +112,8 @@ pub enum DeviceCommand {
     },
     Open,
     Close,
+    Start,
+    Stop,
     Configure {
         configuration: ReceiverConfiguration,
     },

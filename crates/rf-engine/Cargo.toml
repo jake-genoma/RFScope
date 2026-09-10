@@ -9,3 +9,5 @@ rf-device={path="../rf-device"}
 rf-dsp={path="../rf-dsp"}
 rf-types={path="../rf-types"}
 tokio.workspace=true
+
+tracing.workspace=true

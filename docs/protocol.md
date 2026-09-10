@@ -34,8 +34,7 @@ Unknown versions/types must be rejected. Later audio/baseband/preview formats re
 Hardware support is opt-in (`rf-server --features hackrf`). Existing status and
 state routes remain available; status adds `device` with `descriptor`,
 `capabilities`, string-valued `metadata`, `opened`, `supports_iq_streaming`, and
-nullable `configuration`. `source` follows the selected driver. Hardware
-`state.running` is always false in this control-only milestone. `opened` means
+nullable `configuration`, and `running`. `source` follows the selected driver. Hardware `state.running` reports the owner’s RX state. `opened` means
 exclusive control ownership, not reception; closed hardware reports zero
 frequency/rate in `state` and null applied configuration.
 
@@ -45,6 +44,7 @@ frequency/rate in `state` and null applied configuration.
 - `PATCH /api/v1/device/control`: tagged JSON command, returning full status:
   - `{"action":"select","id":"hackrf:<full serial>"}` or ID `mock-0`.
   - `{"action":"open"}` / `{"action":"close"}` (idempotent for hardware).
+  - `{"action":"start"}` / `{"action":"stop"}`: receive-only start/stop, retaining ownership on stop.
   - `{"action":"configure","configuration":{"center_frequency_hz":100000000,"sample_rate_hz":8000000,"gains":{"if":16,"baseband":20,"rf_amp":0},"baseband_filter_bandwidth_hz":5000000}}`.
 
 Configure supplies every reported gain stage. Stage IDs/labels/units/ranges and
@@ -59,13 +59,24 @@ board. Check `opened` before rendering controls.
 `PATCH /api/v1/device/state` also configures selected, opened hardware: optional
 frequency, sample rate, `gains` (complete map) and
 `baseband_filter_bandwidth_hz` fields merge with the accepted configuration.
-Hardware rejects `running` and `fft_size`; ownership uses open/close instead.
+Hardware accepts `running` and `fft_size`; ownership still uses open/close. Configuration during RX restarts capture with a fresh source.
 Mock retains its existing controls and rejects hardware gain/filter fields.
 Validation happens before shared mock state changes or native setters run.
 
 Invalid settings return 400, ownership conflicts 409, native/unavailable/queue
 errors 503 with operation and native code/name when available. A partial native
 configuration failure closes the device and clears accepted settings; fetch status
-after errors. Configuration is accepted settings, not readback. Binary spectrum
-v1 is unchanged and remains mock-only. WebSocket clients can disconnect while
+after errors. Configuration is accepted settings, not readback. Binary spectrum v1 is unchanged and carries either live or mock PSD. WebSocket clients can disconnect while
 mock is paused; lagging clients skip missed frames instead of terminating.
+
+## RX diagnostics
+
+`received_samples` counts complex samples consumed by DSP over the engine lifetime.
+`received_bytes`, `received_blocks`, `dropped_iq_blocks`, `dropped_iq_bytes`,
+`invalid_iq_blocks`, `stream_faults`, and `hardware_streaming` describe the latest
+RX source and reset on RX restart. Native bytes include application-dropped bytes;
+complex samples equal bytes / 2 for signed interleaved IQ. Invalid transfer lengths
+are counted separately. Expected stop/reconfigure gaps and intentionally discarded
+queued blocks are not overload drops. Counters cannot detect firmware/USB loss.
+`fft_frames` and display/client metrics remain engine-lifetime counters. Display
+no-subscriber drops do not mean IQ loss. Health is polled on the owner at 100 ms.

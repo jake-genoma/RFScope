@@ -1,11 +1,13 @@
-# HackRF control integration
+# HackRF RX integration
 
 RFScope uses the official Great Scott Gadgets **libhackrf**, optionally linked by
 `rf-device`'s `hackrf` feature. Default/mock builds neither discover nor link it.
-This milestone implements enumeration, exclusive selected-device ownership,
-metadata, and receive configuration. **No IQ callback, RX start, TX API, sweep,
-audio, demodulation, VFO, or recording is implemented.** Opening means ownership
-in idle mode, not sample reception. Mock IQ generation and FFT remain usable.
+The backend implements enumeration, exclusive ownership, metadata, receive
+configuration and bounded RX streaming through the common IQ/FFT path. Mock
+remains usable without libhackrf. No TX APIs or symbols are bound.
+
+See [current RX verification](rx-validation.md) for measured rates and limitations.
+The control-only verification below is historical evidence from the foundation.
 
 ## Fedora prerequisites
 
@@ -36,13 +38,13 @@ sandbox reported `hackrf_init: Other error (-1000)` while host access succeeded.
 ## Running
 
 ```sh
-cargo run -p rf-server --features hackrf
+cargo run -p rf-server --release --features hackrf
 npm run dev
 ```
 
 Use **Refresh devices**, select the full-serial device, then **Open device**.
 Metadata and capability-driven controls appear after opening. Edit settings and
-press **Apply receiver settings**. Close before selecting another device. Selecting
+press **Apply receiver settings**, then **START RX**. **STOP RX** retains ownership; **Close device** stops and releases it. Close before selecting another device. Selecting
 hardware pauses mock production and hides mock plots; switching back to mock
 leaves it stopped until **START RX** is pressed. Closing clears applied settings;
 reopening reapplies conservative defaults (100 MHz, 8 MS/s, 5 MHz filter, all gains
@@ -58,7 +60,7 @@ The original defaults remain ports 8787 and 5173.
 Private manual declarations in `crates/rf-device/src/hackrf/ffi.rs` match the
 installed official 2026.01.3 header. Unsafe calls and raw pointers remain inside
 that backend. A safe generic `ReceiverControl` seam separates low-rate ownership
-from `IqSource`; implementing fake IQ reads before streaming exists is avoided.
+from `IqSource`; a bounded source mailbox now supplies the real IQ adapter.
 
 A dedicated thread exclusively owns the native context and receiver. Its control
 queue is bounded at eight requests and rejects saturation; HTTP dispatch uses
@@ -149,10 +151,12 @@ browser. Physical unplug/reconnect, amplifier-enabled operation and other boards
 were not tested. The API tests and diagnostic used a separate local server/device
 session; no system packages, udev rules or USB configuration were changed.
 
-## Next narrow milestone
+## RX lifecycle and overload
 
-Add receive-only IQ streaming into the existing `IqSource`/FFT path, with minimal
-callbacks transferring samples into explicitly bounded buffers, clear drop/error
-accounting, and stop/disconnect tests. No FFT/DSP in the callback. Do not add a
-separate hardware or playback DSP stack. Sustained throughput, sample integrity,
-and spectrum accuracy remain untested until then.
+Configuration changes while receiving stop RX, apply all settings and restart
+with a fresh pool. Even frequency-only changes currently use this conservative
+restart: tuning is supported during operation, with a brief intentional gap.
+Counters reset for each RX source. Native-stream failures stop delivery and
+increment `stream_faults`; explicit restart or close/reopen allows recovery.
+Raw USB samples have no sequence number, so application drop counters cannot
+prove that firmware/USB never lost samples. Physical unplug is not verified.

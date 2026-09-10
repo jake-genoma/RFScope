@@ -2,6 +2,7 @@
 pub mod control;
 #[cfg(feature = "hackrf")]
 mod hackrf;
+pub mod stream;
 use async_trait::async_trait;
 use num_complex::Complex32;
 use rand::{Rng, SeedableRng};
@@ -12,6 +13,10 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum DeviceError {
+    #[error("no IQ available")]
+    NoData,
+    #[error("IQ stream: {0}")]
+    Stream(String),
     #[error("value {value} is outside {minimum}..={maximum}")]
     OutOfRange {
         value: u64,
@@ -26,7 +31,7 @@ pub trait IqSource: Send {
     fn capabilities(&self) -> DeviceCapabilities;
     fn state(&self) -> DeviceState;
     fn configure(&mut self, center_hz: u64, sample_rate_hz: u32) -> Result<(), DeviceError>;
-    async fn read(&mut self, output: &mut [Complex32]) -> Result<(), DeviceError>;
+    async fn read(&mut self, output: &mut [Complex32]) -> Result<usize, DeviceError>;
 }
 
 pub struct MockSource {
@@ -104,7 +109,7 @@ impl IqSource for MockSource {
         self.state.sample_rate_hz = rate;
         Ok(())
     }
-    async fn read(&mut self, output: &mut [Complex32]) -> Result<(), DeviceError> {
+    async fn read(&mut self, output: &mut [Complex32]) -> Result<usize, DeviceError> {
         let rate = self.state.sample_rate_hz as f32;
         for (offset, sample) in output.iter_mut().enumerate() {
             let t = (self.sample_index + offset as u64) as f32 / rate;
@@ -119,6 +124,6 @@ impl IqSource for MockSource {
             );
         }
         self.sample_index += output.len() as u64;
-        Ok(())
+        Ok(output.len())
     }
 }

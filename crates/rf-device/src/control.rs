@@ -1,7 +1,8 @@
 //! Low-rate device ownership/control, separate from the unchanged IQ source seam.
-use crate::{IqSource, MockSource};
+use crate::{stream::BufferedSource, IqSource, MockSource};
 use rf_types::*;
 use std::sync::mpsc::{self, SyncSender};
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -25,6 +26,16 @@ pub(crate) trait ReceiverControl {
     fn snapshot(&self) -> DeviceSelection;
     fn configure(&mut self, config: ReceiverConfiguration) -> Result<()>;
     fn close(&mut self) -> Result<()>;
+    fn start(&mut self) -> Result<BufferedSource> {
+        Err(ControlError::Unavailable("RX unsupported".into()))
+    }
+    fn stop(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn running(&self) -> bool {
+        false
+    }
+    fn check_health(&mut self) {}
 }
 
 pub fn validate_configuration(
@@ -85,6 +96,7 @@ fn mock_selection() -> DeviceSelection {
         capabilities: source.capabilities(),
         metadata: Default::default(),
         opened: false,
+        running: false,
         supports_iq_streaming: true,
         configuration: None,
     }
@@ -101,15 +113,30 @@ enum Request {
 #[derive(Clone)]
 pub struct DeviceController {
     sender: SyncSender<Request>,
+    pub stream: Arc<Mutex<Option<BufferedSource>>>,
 }
 impl DeviceController {
     pub fn new() -> Result<Self> {
         let (sender, receiver) = mpsc::sync_channel(8);
+        let stream = Arc::new(Mutex::new(None));
+        let pending = stream.clone();
         std::thread::Builder::new()
             .name("sdr-device-control".into())
             .spawn(move || {
-                let mut worker = Worker::default();
-                while let Ok(request) = receiver.recv() {
+                let mut worker = Worker {
+                    stream: pending,
+                    ..Worker::default()
+                };
+                loop {
+                    if let Some(r) = worker.receiver.as_mut() {
+                        r.check_health();
+                    }
+                    let request = match receiver.recv_timeout(std::time::Duration::from_millis(100))
+                    {
+                        Ok(request) => request,
+                        Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    };
                     match request {
                         Request::Shutdown(reply) => {
                             let result = worker.shutdown();
@@ -130,7 +157,7 @@ impl DeviceController {
                 // Receiver drops before library. RAII closes devices even on channel shutdown.
             })
             .map_err(|e| ControlError::Unavailable(e.to_string()))?;
-        Ok(Self { sender })
+        Ok(Self { sender, stream })
     }
     fn call<T>(&self, make: impl FnOnce(mpsc::Sender<Result<T>>) -> Request) -> Result<T> {
         let (tx, rx) = mpsc::channel();
@@ -156,6 +183,7 @@ impl DeviceController {
 }
 
 struct Worker {
+    stream: Arc<Mutex<Option<BufferedSource>>>,
     selected: DeviceSelection,
     receiver: Option<Box<dyn ReceiverControl>>,
     #[cfg(feature = "hackrf")]
@@ -164,6 +192,7 @@ struct Worker {
 impl Default for Worker {
     fn default() -> Self {
         Self {
+            stream: Arc::new(Mutex::new(None)),
             selected: mock_selection(),
             receiver: None,
             #[cfg(feature = "hackrf")]
@@ -258,13 +287,14 @@ impl Worker {
                         },
                         metadata: Default::default(),
                         opened: false,
+                        running: false,
                         supports_iq_streaming: false,
                         configuration: None,
                     };
                 }
             }
             DeviceCommand::Open => {
-                if self.selected.supports_iq_streaming {
+                if self.selected.descriptor.driver == "mock" {
                     return Err(ControlError::Invalid(
                         "mock uses the existing RX state API".into(),
                     ));
@@ -286,8 +316,26 @@ impl Worker {
                 if let Some(mut receiver) = self.receiver.take() {
                     self.selected = receiver.snapshot();
                     self.selected.opened = false;
+                    self.selected.running = false;
                     self.selected.configuration = None;
                     receiver.close()?;
+                }
+            }
+            DeviceCommand::Start => {
+                let receiver = self
+                    .receiver
+                    .as_mut()
+                    .ok_or_else(|| ControlError::Conflict("open device before RX".into()))?;
+                if !receiver.running() {
+                    let source = receiver.start()?;
+                    *self.stream.lock().map_err(|_| {
+                        ControlError::Unavailable("source mailbox poisoned".into())
+                    })? = Some(source);
+                }
+            }
+            DeviceCommand::Stop => {
+                if let Some(receiver) = self.receiver.as_mut() {
+                    receiver.stop()?;
                 }
             }
             DeviceCommand::Configure { configuration } => {
@@ -295,11 +343,14 @@ impl Worker {
                     ControlError::Conflict("open the selected device first".into())
                 })?;
                 validate_configuration(&receiver.snapshot().capabilities, &configuration)?;
+                let restart = receiver.running();
+                receiver.stop()?;
                 if let Err(error) = receiver.configure(configuration) {
                     // Native setters are not transactional. Close on partial failure; never report stale applied settings.
                     if let Some(mut receiver) = self.receiver.take() {
                         self.selected = receiver.snapshot();
                         self.selected.opened = false;
+                        self.selected.running = false;
                         self.selected.configuration = None;
                         if let Err(close) = receiver.close() {
                             return Err(ControlError::Unavailable(format!(
@@ -308,6 +359,12 @@ impl Worker {
                         }
                     }
                     return Err(error);
+                }
+                if restart {
+                    let source = receiver.start()?;
+                    *self.stream.lock().map_err(|_| {
+                        ControlError::Unavailable("source mailbox poisoned".into())
+                    })? = Some(source);
                 }
             }
         }

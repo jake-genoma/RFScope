@@ -48,7 +48,7 @@ export function DevicePanel({ device, onChange }: { device?: DeviceSelection; on
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); onChange(); }
   }
-  const hardware = device && !device.supports_iq_streaming;
+  const hardware = device && device.descriptor.driver !== "mock";
   return <section className="device-panel">
     <label>Device <select aria-label="Device" disabled={busy || device?.opened} value={device?.descriptor.id ?? "mock-0"} onChange={e => void command({ action: "select", id: e.target.value })}>
       {devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
@@ -56,7 +56,7 @@ export function DevicePanel({ device, onChange }: { device?: DeviceSelection; on
     <button disabled={busy} onClick={() => void refresh()}>Refresh devices</button>
     {hardware && <>
       <button disabled={busy} onClick={() => void command({ action: device.opened ? "close" : "open" })}>{device.opened ? "Close device" : "Open device"}</button>
-      <p><strong>{device.descriptor.name}</strong> · {device.opened ? "Owned" : "Closed"} · Control only; live IQ streaming is the next milestone.</p>
+      <p><strong>{device.descriptor.name}</strong> · {device.opened ? "Owned" : "Closed"} · Receive-only · use START RX for live IQ.</p>
       <dl>{Object.entries(device.metadata).map(([key, value]) => <div key={key}><dt>{key.replaceAll("_", " ")}</dt><dd>{value}</dd></div>)}</dl>
       {device.opened && draft && <form onSubmit={e => { e.preventDefault(); void command({ action: "configure", configuration: draft }); }}>
         <label>Center frequency (Hz) <input aria-label="Hardware center frequency" type="number" required {...device.capabilities.frequency_hz} value={draft.center_frequency_hz} onChange={e => setDraft({ ...draft, center_frequency_hz: Number(e.target.value) })} /></label>
