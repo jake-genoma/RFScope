@@ -584,6 +584,7 @@ dependencies = [
  "rf-engine",
  "rf-types",
  "serde",
+ "serde_json",
  "tokio",
  "tower-http",
  "tracing",
