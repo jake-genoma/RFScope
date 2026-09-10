@@ -22,6 +22,7 @@ SigMF raw IQ recording with a bounded writer and lifecycle API is implemented; s
 [recording](recording.md).
 SigMF playback through the common IQ/DSP pipeline is implemented; see
 [playback](playback.md).
+Initial uncalibrated spectrum measurements and `/api/v1/analysis` are implemented.
 
 1. VFO translation/filtering, AM/NFM, 48 kHz browser audio, multiple-VFO model.
 2. Atomic SigMF recording/indexing and file playback through `IqSource`.

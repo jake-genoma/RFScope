@@ -555,6 +555,7 @@ version = "0.1.0"
 dependencies = [
  "num-complex",
  "rustfft",
+ "serde",
 ]
 
 [[package]]
@@ -579,6 +580,7 @@ dependencies = [
  "axum",
  "futures-util",
  "rf-device",
+ "rf-dsp",
  "rf-engine",
  "rf-types",
  "serde",

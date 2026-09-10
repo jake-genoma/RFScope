@@ -1,4 +1,5 @@
 //! Allocation-conscious FFT/PSD processing.
+pub mod analysis;
 pub mod audio;
 pub mod channel;
 pub mod demod;

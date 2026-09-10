@@ -76,6 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/status", get(status))
         .route("/api/v1/device/state", get(status).patch(patch_state))
         .route("/api/v1/metrics", get(metrics))
+        .route("/api/v1/analysis", get(analysis))
         .route("/api/v1/stream/spectrum", get(ws))
         .route("/api/v1/stream/audio", get(ws_audio))
         .route(
@@ -150,6 +151,11 @@ async fn status(State(e): State<Arc<AppState>>) -> Result<Json<Status>, ApiError
 }
 async fn metrics(State(e): State<Arc<AppState>>) -> Json<rf_types::Diagnostics> {
     Json(e.engine.diagnostics())
+}
+async fn analysis(
+    State(e): State<Arc<AppState>>,
+) -> Json<Option<rf_dsp::analysis::SpectrumMeasurements>> {
+    Json(e.engine.latest_measurements.read().await.clone())
 }
 async fn devices(State(e): State<Arc<AppState>>) -> Result<Json<DeviceInventory>, ApiError> {
     Ok(Json(device_call(&e, |d| d.inventory()).await?))

@@ -30,6 +30,7 @@ pub struct Engine {
     pub state: Arc<RwLock<DeviceState>>,
     pub fft_size: Arc<RwLock<usize>>,
     pub frames: broadcast::Sender<Bytes>,
+    pub latest_measurements: Arc<RwLock<Option<rf_dsp::analysis::SpectrumMeasurements>>>,
     received: Arc<AtomicU64>,
     frame_count: Arc<AtomicU64>,
     dropped: Arc<AtomicU64>,
@@ -50,6 +51,7 @@ impl Engine {
             state: Arc::new(RwLock::new(MockSource::default().state())),
             fft_size: Arc::new(RwLock::new(2048)),
             frames,
+            latest_measurements: Arc::new(RwLock::new(None)),
             received: Arc::new(AtomicU64::new(0)),
             frame_count: Arc::new(AtomicU64::new(0)),
             dropped: Arc::new(AtomicU64::new(0)),
@@ -193,6 +195,11 @@ impl Engine {
             };
             if fft.process(&iq[count - size..count], &mut bins).is_err() {
                 continue;
+            }
+            if let Some(measurements) =
+                rf_dsp::analysis::measure(&bins, state.center_frequency_hz, state.sample_rate_hz)
+            {
+                *self.latest_measurements.write().await = Some(measurements);
             }
             sequence += 1;
             if self
