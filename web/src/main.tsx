@@ -63,7 +63,12 @@ function App() {
       if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok || !markerResponse.ok || !detectionResponse.ok || !workspaceResponse.ok || !bookmarkResponse.ok || !annotationResponse.ok || !storedRecordingResponse.ok || !offsetResponse.ok || !preferenceResponse.ok) throw new Error("Status request failed");
       const preferences = await preferenceResponse.json() as Preference[];
       const station = preferences.find(preference => preference.key === "station_label");
-      if (station) setStationLabel(JSON.parse(station.value_json) as string);
+      if (station) {
+        try {
+          const value = JSON.parse(station.value_json);
+          if (typeof value === "string") setStationLabel(value);
+        } catch { /* storage validates JSON; tolerate manually damaged legacy rows. */ }
+      }
       setStatus(await stateResponse.json() as Status); setVfos(await vfoResponse.json() as Vfo[]); setRecording(await recordingResponse.json() as Recording | null); setPlayback(await playbackResponse.json() as Playback | null); setAnalysis(await analysisResponse.json() as Analysis | null); setMarkers(await markerResponse.json() as Marker[]); setDetections(await detectionResponse.json() as SignalEvent[]); setWorkspaces(await workspaceResponse.json() as Workspace[]); setBookmarks(await bookmarkResponse.json() as Bookmark[]); setAnnotations(await annotationResponse.json() as Annotation[]); setStoredRecordings(await storedRecordingResponse.json() as StoredRecording[]); setOffsets(await offsetResponse.json() as AnalysisOffsets | null);
     } catch (error) { setError(String(error)); }
   }
