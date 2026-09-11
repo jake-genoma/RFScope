@@ -24,6 +24,7 @@ type Workspace = { id: string; name: string; payload_json: string };
 type WorkspacePayload = { center_frequency_hz?: number; sample_rate_hz?: number; vfos?: VfoConfiguration[] };
 type Bookmark = { id: number; recording_id: string | null; sample_index: number; label: string };
 type Annotation = { id: number; recording_id: string | null; start_sample: number; end_sample: number; payload_json: string };
+type StoredRecording = { id: string; directory: string; sample_rate_hz: number; center_frequency_hz: number; created_at_unix_ns: number };
 function App() {
   const [view, setView] = useState("Live");
   const [status, setStatus] = useState<Status | null>(null);
@@ -41,6 +42,7 @@ function App() {
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [annotationLabel, setAnnotationLabel] = useState("Annotation");
   const [annotationEnd, setAnnotationEnd] = useState<number | null>(null);
+  const [storedRecordings, setStoredRecordings] = useState<StoredRecording[]>([]);
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [error, setError] = useState("");
   const selectedDevice = useRef<DeviceSelection | undefined>(undefined);
@@ -52,9 +54,9 @@ function App() {
   const lastFrame = useRef<ReturnType<typeof decodeSpectrum> | null>(null);
   async function refresh() {
     try {
-      const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse, markerResponse, detectionResponse, workspaceResponse, bookmarkResponse, annotationResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`), fetch(`${API}/markers`), fetch(`${API}/detections`), fetch(`${API}/workspaces`), fetch(`${API}/bookmarks`), fetch(`${API}/annotations`)]);
-      if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok || !markerResponse.ok || !detectionResponse.ok || !workspaceResponse.ok || !bookmarkResponse.ok || !annotationResponse.ok) throw new Error("Status request failed");
-      setStatus(await stateResponse.json() as Status); setVfos(await vfoResponse.json() as Vfo[]); setRecording(await recordingResponse.json() as Recording | null); setPlayback(await playbackResponse.json() as Playback | null); setAnalysis(await analysisResponse.json() as Analysis | null); setMarkers(await markerResponse.json() as Marker[]); setDetections(await detectionResponse.json() as SignalEvent[]); setWorkspaces(await workspaceResponse.json() as Workspace[]); setBookmarks(await bookmarkResponse.json() as Bookmark[]); setAnnotations(await annotationResponse.json() as Annotation[]);
+      const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse, markerResponse, detectionResponse, workspaceResponse, bookmarkResponse, annotationResponse, storedRecordingResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`), fetch(`${API}/markers`), fetch(`${API}/detections`), fetch(`${API}/workspaces`), fetch(`${API}/bookmarks`), fetch(`${API}/annotations`), fetch(`${API}/storage/recordings`)]);
+      if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok || !markerResponse.ok || !detectionResponse.ok || !workspaceResponse.ok || !bookmarkResponse.ok || !annotationResponse.ok || !storedRecordingResponse.ok) throw new Error("Status request failed");
+      setStatus(await stateResponse.json() as Status); setVfos(await vfoResponse.json() as Vfo[]); setRecording(await recordingResponse.json() as Recording | null); setPlayback(await playbackResponse.json() as Playback | null); setAnalysis(await analysisResponse.json() as Analysis | null); setMarkers(await markerResponse.json() as Marker[]); setDetections(await detectionResponse.json() as SignalEvent[]); setWorkspaces(await workspaceResponse.json() as Workspace[]); setBookmarks(await bookmarkResponse.json() as Bookmark[]); setAnnotations(await annotationResponse.json() as Annotation[]); setStoredRecordings(await storedRecordingResponse.json() as StoredRecording[]);
     } catch (error) { setError(String(error)); }
   }
   useEffect(() => {
@@ -177,6 +179,12 @@ function App() {
       await refresh(); setError("");
     } catch (error) { setError(String(error)); }
   }
+  async function loadStoredRecording(recording: StoredRecording) {
+    const metadata_path = `${recording.directory}/${recording.id}.sigmf-meta`;
+    setPlaybackPath(metadata_path);
+    await playbackAction("POST", { metadata_path });
+    setView("Playback");
+  }
   const visible = !status?.device || status.device.supports_iq_streaming;
   return <main>
     <header><b>RF<span>Scope</span></b><nav>{["Live", "Receivers", "Recordings", "Playback", "Signals", "Analysis", "Workspaces", "Diagnostics", "Settings"].map(name => <button key={name} onClick={() => setView(name)} className={view === name ? "active" : ""}>{name}</button>)}</nav></header>
@@ -204,7 +212,7 @@ function App() {
     </div>
     {view !== "Live" && <section className="panels workstation-view">
       {view === "Receivers" && <article><h3>Receivers</h3><VfoPanel vfos={vfos} center={status?.state.center_frequency_hz ?? 0} refresh={() => void refresh()} /></article>}
-      {view === "Recordings" && <article><h3>Recordings</h3><p>{recording ? `${recording.id} · ${(recording.bytes_written / 1e6).toFixed(1)} MB · ${recording.dropped_blocks} dropped blocks` : "No active recording"}</p></article>}
+      {view === "Recordings" && <article><h3>Recordings</h3><p>{recording ? `${recording.id} · ${(recording.bytes_written / 1e6).toFixed(1)} MB · ${recording.dropped_blocks} dropped blocks` : "No active recording"}</p>{storedRecordings.length ? <dl>{storedRecordings.map(stored => <React.Fragment key={stored.id}><dt>{stored.id} · {(stored.center_frequency_hz / 1e6).toFixed(6)} MHz · {(stored.sample_rate_hz / 1e6).toFixed(1)} MS/s</dt><dd><button onClick={() => void loadStoredRecording(stored)}>Load in Playback</button></dd></React.Fragment>)}</dl> : <p>No indexed recordings.</p>}</article>}
       {view === "Playback" && <article><h3>Playback timeline</h3><p>{playback?.loaded ? `${playback.session_id} · ${playback.position_samples.toLocaleString()} / ${playback.total_samples.toLocaleString()} samples` : "Load a SigMF metadata file above."}</p>{playback?.loaded && <><label>Bookmark <input aria-label="Bookmark label" value={bookmarkLabel} maxLength={256} onChange={event => setBookmarkLabel(event.target.value)} /></label><button onClick={() => void saveBookmark()}>Save at current sample</button><dl>{bookmarks.filter(bookmark => bookmark.recording_id === playback.session_id).map(bookmark => <React.Fragment key={bookmark.id}><dt>{bookmark.label} · {bookmark.sample_index.toLocaleString()}</dt><dd><button onClick={() => void playbackAction("PATCH", { action: "seek", position_samples: bookmark.sample_index })}>Seek</button><button onClick={() => void deleteBookmark(bookmark.id)}>Delete</button></dd></React.Fragment>)}</dl><label>Annotation <input aria-label="Annotation label" value={annotationLabel} maxLength={256} onChange={event => setAnnotationLabel(event.target.value)} /></label><label>End sample <input aria-label="Annotation end sample" type="number" min={playback.position_samples} max={playback.total_samples} value={annotationEnd ?? playback.position_samples} onChange={event => setAnnotationEnd(Number(event.target.value))} /></label><button onClick={() => void saveAnnotation()}>Save range</button><dl>{annotations.filter(annotation => annotation.recording_id === playback.session_id).map(annotation => <React.Fragment key={annotation.id}><dt>{(() => { try { return (JSON.parse(annotation.payload_json) as { label?: string }).label ?? "Annotation"; } catch { return "Annotation"; } })()} · {annotation.start_sample.toLocaleString()}–{annotation.end_sample.toLocaleString()}</dt><dd><button onClick={() => void playbackAction("PATCH", { action: "seek", position_samples: annotation.start_sample })}>Seek</button><button onClick={() => void deleteAnnotation(annotation.id)}>Delete</button></dd></React.Fragment>)}</dl></>}</article>}
       {view === "Signals" && <article><h3>Signals</h3>{detections.length ? <dl>{detections.map(event => <React.Fragment key={event.id}><dt>{event.id} · {(event.start_frequency_hz / 1e6).toFixed(6)} MHz</dt><dd>{event.end_time_unix_ns == null ? "active" : "complete"} · {event.snr_db.toFixed(1)} dB SNR · {event.peak_dbfs.toFixed(1)} dBFS</dd></React.Fragment>)}</dl> : <p>No threshold events yet.</p>}</article>}
       {view === "Analysis" && <article><h3>Analysis</h3>{analysis ? <><button onClick={() => void addPeakMarker()}>Mark current peak</button><dl>{Object.entries(analysis).map(([key, value]) => <React.Fragment key={key}><dt>{key.replaceAll("_", " ")}</dt><dd>{value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</dd></React.Fragment>)}</dl><p>{markers.length} marker{markers.length === 1 ? "" : "s"} active</p></> : <p>Waiting for a spectrum frame.</p>}</article>}

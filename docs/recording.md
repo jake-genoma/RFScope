@@ -40,6 +40,10 @@ running. Selecting/closing a device stops RX but does not silently finalize an
 active recording; callers should stop first. The writer is receive-only; no TX
 symbols or files exist.
 
+Completed captures are indexed in SQLite at recording start. The Recordings view
+lists that index and can load an indexed capture into the common SigMF playback
+pipeline.
+
 ## Verification
 
 Unit tests use temporary directories to verify unique sessions, create-new
