@@ -27,6 +27,7 @@ type Annotation = { id: number; recording_id: string | null; start_sample: numbe
 type StoredRecording = { id: string; directory: string; sample_rate_hz: number; center_frequency_hz: number; created_at_unix_ns: number };
 type Offset = { id: string; label: string; offset_hz: number };
 type AnalysisOffsets = { peak_frequency_hz: number; markers: Offset[]; vfos: Offset[] };
+type Preference = { key: string; value_json: string };
 function App() {
   const [view, setView] = useState("Live");
   const [status, setStatus] = useState<Status | null>(null);
@@ -46,6 +47,7 @@ function App() {
   const [annotationEnd, setAnnotationEnd] = useState<number | null>(null);
   const [storedRecordings, setStoredRecordings] = useState<StoredRecording[]>([]);
   const [offsets, setOffsets] = useState<AnalysisOffsets | null>(null);
+  const [stationLabel, setStationLabel] = useState("");
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [error, setError] = useState("");
   const selectedDevice = useRef<DeviceSelection | undefined>(undefined);
@@ -57,8 +59,11 @@ function App() {
   const lastFrame = useRef<ReturnType<typeof decodeSpectrum> | null>(null);
   async function refresh() {
     try {
-      const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse, markerResponse, detectionResponse, workspaceResponse, bookmarkResponse, annotationResponse, storedRecordingResponse, offsetResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`), fetch(`${API}/markers`), fetch(`${API}/detections`), fetch(`${API}/workspaces`), fetch(`${API}/bookmarks`), fetch(`${API}/annotations`), fetch(`${API}/storage/recordings`), fetch(`${API}/analysis/offsets`)]);
-      if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok || !markerResponse.ok || !detectionResponse.ok || !workspaceResponse.ok || !bookmarkResponse.ok || !annotationResponse.ok || !storedRecordingResponse.ok || !offsetResponse.ok) throw new Error("Status request failed");
+      const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse, markerResponse, detectionResponse, workspaceResponse, bookmarkResponse, annotationResponse, storedRecordingResponse, offsetResponse, preferenceResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`), fetch(`${API}/markers`), fetch(`${API}/detections`), fetch(`${API}/workspaces`), fetch(`${API}/bookmarks`), fetch(`${API}/annotations`), fetch(`${API}/storage/recordings`), fetch(`${API}/analysis/offsets`), fetch(`${API}/preferences`)]);
+      if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok || !markerResponse.ok || !detectionResponse.ok || !workspaceResponse.ok || !bookmarkResponse.ok || !annotationResponse.ok || !storedRecordingResponse.ok || !offsetResponse.ok || !preferenceResponse.ok) throw new Error("Status request failed");
+      const preferences = await preferenceResponse.json() as Preference[];
+      const station = preferences.find(preference => preference.key === "station_label");
+      if (station) setStationLabel(JSON.parse(station.value_json) as string);
       setStatus(await stateResponse.json() as Status); setVfos(await vfoResponse.json() as Vfo[]); setRecording(await recordingResponse.json() as Recording | null); setPlayback(await playbackResponse.json() as Playback | null); setAnalysis(await analysisResponse.json() as Analysis | null); setMarkers(await markerResponse.json() as Marker[]); setDetections(await detectionResponse.json() as SignalEvent[]); setWorkspaces(await workspaceResponse.json() as Workspace[]); setBookmarks(await bookmarkResponse.json() as Bookmark[]); setAnnotations(await annotationResponse.json() as Annotation[]); setStoredRecordings(await storedRecordingResponse.json() as StoredRecording[]); setOffsets(await offsetResponse.json() as AnalysisOffsets | null);
     } catch (error) { setError(String(error)); }
   }
@@ -188,6 +193,13 @@ function App() {
     await playbackAction("POST", { metadata_path });
     setView("Playback");
   }
+  async function saveStationLabel() {
+    try {
+      const response = await fetch(`${API}/preferences`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key: "station_label", value_json: JSON.stringify(stationLabel) }) });
+      if (!response.ok) throw new Error(await response.text());
+      setError("");
+    } catch (error) { setError(String(error)); }
+  }
   const visible = !status?.device || status.device.supports_iq_streaming;
   return <main>
     <header><b>RF<span>Scope</span></b><nav>{["Live", "Receivers", "Recordings", "Playback", "Signals", "Analysis", "Workspaces", "Diagnostics", "Settings"].map(name => <button key={name} onClick={() => setView(name)} className={view === name ? "active" : ""}>{name}</button>)}</nav></header>
@@ -221,7 +233,7 @@ function App() {
       {view === "Analysis" && <article><h3>Analysis</h3>{analysis ? <><button onClick={() => void addPeakMarker()}>Mark current peak</button><dl>{Object.entries(analysis).map(([key, value]) => <React.Fragment key={key}><dt>{key.replaceAll("_", " ")}</dt><dd>{value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</dd></React.Fragment>)}</dl><p>{markers.length} marker{markers.length === 1 ? "" : "s"} active</p>{offsets && <><h4>Peak offsets</h4><dl>{[...offsets.markers, ...offsets.vfos].map(offset => <React.Fragment key={offset.id}><dt>{offset.label}</dt><dd>{offset.offset_hz.toLocaleString(undefined, { maximumFractionDigits: 1 })} Hz</dd></React.Fragment>)}</dl></>}</> : <p>Waiting for a spectrum frame.</p>}</article>}
       {view === "Workspaces" && <article><h3>Workspaces</h3><label>Name <input aria-label="Workspace name" value={workspaceName} maxLength={128} onChange={event => setWorkspaceName(event.target.value)} /></label><button onClick={() => void saveWorkspace()}>Save current workspace</button><p>Restoring applies capture settings and recreates saved VFO configurations with fresh runtime IDs.</p>{workspaces.length ? <dl>{workspaces.map(workspace => <React.Fragment key={workspace.id}><dt>{workspace.name}</dt><dd><button onClick={() => void loadWorkspace(workspace)}>Load</button><button onClick={() => void deleteWorkspace(workspace.id)}>Delete</button></dd></React.Fragment>)}</dl> : <p>No saved workspaces.</p>}</article>}
       {view === "Diagnostics" && <article><h3>Diagnostics</h3><dl>{Object.entries(status?.diagnostics ?? {}).map(([name, value]) => <React.Fragment key={name}><dt>{name.replaceAll("_", " ")}</dt><dd>{String(value)}</dd></React.Fragment>)}</dl></article>}
-      {view === "Settings" && <article><h3>Settings</h3><p>Server: {API} · source: {status?.source ?? "offline"}</p></article>}
+      {view === "Settings" && <article><h3>Settings</h3><p>Server: {API} · source: {status?.source ?? "offline"}</p><label>Station label <input aria-label="Station label" value={stationLabel} maxLength={128} onChange={event => setStationLabel(event.target.value)} /></label><button onClick={() => void saveStationLabel()}>Save</button></article>}
     </section>}
   </main>;
 }

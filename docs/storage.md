@@ -11,6 +11,7 @@ Workspaces are stored transactionally with `GET/POST /api/v1/workspaces` and `DE
 Bookmarks and annotations are stored transactionally with corresponding `GET/POST/DELETE` endpoints at `/api/v1/bookmarks` and `/api/v1/annotations`. Annotation payloads are validated JSON and are linked to a recording when one is supplied.
 
 Application preferences use `GET/POST /api/v1/preferences`. Each preference has a nonempty stable key and a validated JSON value, allowing incremental UX settings without placing mutable application state in the radio path.
+The Settings view currently uses this boundary for a persisted station label.
 
 Completed SNR-threshold events move from the DSP loop into a bounded 128-event worker queue. The worker performs SQLite writes off the real-time path; `dropped_event_persistence` reports a saturated or unavailable event writer. `GET /api/v1/detections` combines the latest 4096 stored completed events with the bounded live event tracker.
 
