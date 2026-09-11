@@ -17,11 +17,11 @@ gets silently overwritten. `validate_sigmf` checks datatype, nonzero frequency a
 rate, capture presence, and even data length.
 
 The writer reports elapsed time, bytes/samples written, current queue depth,
-projected bytes/s (2 × sample rate), dropped blocks/bytes and write errors. A
-recording stop returns an explicit error if any blocks dropped or writes failed;
-it does not claim complete data. Disk space is not yet actively polled, so an OS
-write error is the current disk-full diagnostic. Events/settings history are not
-yet appended after the initial metadata capture and remain a follow-up.
+projected bytes/s (2 × sample rate), available disk space, dropped blocks/bytes
+and write errors. Disk space is sampled only while serving status, never on the
+callback or writer path. A recording stop returns an explicit error if any blocks
+dropped or writes failed; it does not claim complete data. Events/settings history
+are not yet appended after the initial metadata capture and remain a follow-up.
 
 ## API and UI
 

@@ -5,6 +5,7 @@ edition.workspace=true
 license.workspace=true
 [dependencies]
 bytes.workspace=true
+fs2.workspace=true
 arrow-array.workspace=true
 arrow-schema.workspace=true
 rf-device={path="../rf-device"}

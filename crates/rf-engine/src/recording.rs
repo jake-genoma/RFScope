@@ -72,6 +72,7 @@ pub struct RecordingSummary {
     pub write_errors: u64,
     pub last_error: Option<String>,
     pub projected_bytes_per_second: u64,
+    pub available_disk_bytes: Option<u64>,
 }
 
 struct Block {
@@ -251,6 +252,7 @@ impl Recording {
             write_errors: 0,
             last_error: None,
             projected_bytes_per_second: u64::from(sample_rate_hz) * 2,
+            available_disk_bytes: fs2::available_space(&directory).ok(),
         }));
         let writer_summary = summary.clone();
         let join = std::thread::Builder::new()
@@ -270,27 +272,33 @@ impl Recording {
         self.sink.clone()
     }
     pub fn summary(&self) -> RecordingSummary {
-        self.summary
-            .lock()
-            .map(|s| s.clone())
-            .unwrap_or_else(|_| RecordingSummary {
-                id: "unknown".into(),
-                directory: String::new(),
-                data_path: String::new(),
-                meta_path: String::new(),
-                active: false,
-                sample_rate_hz: 0,
-                center_frequency_hz: 0,
-                elapsed_ms: 0,
-                bytes_written: 0,
-                samples_written: 0,
-                queued_blocks: 0,
-                dropped_blocks: 0,
-                dropped_bytes: 0,
-                write_errors: 1,
-                last_error: Some("summary lock poisoned".into()),
-                projected_bytes_per_second: 0,
-            })
+        let mut summary =
+            self.summary
+                .lock()
+                .map(|s| s.clone())
+                .unwrap_or_else(|_| RecordingSummary {
+                    id: "unknown".into(),
+                    directory: String::new(),
+                    data_path: String::new(),
+                    meta_path: String::new(),
+                    active: false,
+                    sample_rate_hz: 0,
+                    center_frequency_hz: 0,
+                    elapsed_ms: 0,
+                    bytes_written: 0,
+                    samples_written: 0,
+                    queued_blocks: 0,
+                    dropped_blocks: 0,
+                    dropped_bytes: 0,
+                    write_errors: 1,
+                    last_error: Some("summary lock poisoned".into()),
+                    projected_bytes_per_second: 0,
+                    available_disk_bytes: None,
+                });
+        if !summary.directory.is_empty() {
+            summary.available_disk_bytes = fs2::available_space(&summary.directory).ok();
+        }
+        summary
     }
     pub fn finish(mut self) -> io::Result<RecordingSummary> {
         self.sink.shared.active.store(false, Ordering::Release);
