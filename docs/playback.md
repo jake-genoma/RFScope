@@ -10,3 +10,5 @@ The API is intentionally small for the first playback milestone:
 - `DELETE /api/v1/playback` ejects the source.
 
 Only `ci8_le` SigMF captures are accepted initially. The sibling `.sigmf-data` file must contain an even number of bytes. Playback does not retune the SDR and cannot be loaded while a native hardware source is selected. The web workstation exposes a path-based load/play/pause/eject control.
+
+The playback panel also accepts an exact sample position for seek. Seeking preserves the common downstream DSP path and resets no hardware state.
