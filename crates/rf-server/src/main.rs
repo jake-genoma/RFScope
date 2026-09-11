@@ -947,6 +947,41 @@ mod tests {
             mutations: Mutex::new(()),
         })
     }
+    fn persistent_state() -> Arc<AppState> {
+        let storage = rf_engine::storage::Storage::in_memory().unwrap();
+        Arc::new(AppState {
+            engine: Engine::mock_with_storage(Some(Arc::new(storage))),
+            devices: DeviceController::new().unwrap(),
+            mutations: Mutex::new(()),
+        })
+    }
+    #[tokio::test]
+    async fn preferences_are_validated_and_persisted() {
+        let e = persistent_state();
+        let stored = set_preference(
+            State(e.clone()),
+            Json(rf_engine::storage::StoredPreference {
+                key: "station_label".into(),
+                value_json: "\"Lab\"".into(),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(stored.key, "station_label");
+        assert_eq!(preferences(State(e.clone())).await.unwrap().0.len(), 1);
+        let invalid = set_preference(
+            State(e.clone()),
+            Json(rf_engine::storage::StoredPreference {
+                key: "station_label".into(),
+                value_json: "not json".into(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(invalid.0, StatusCode::BAD_REQUEST);
+        e.devices.shutdown().unwrap();
+    }
     #[tokio::test]
     async fn vfo_edits_preserve_capture_and_invalid_changes_are_atomic() {
         let e = state();
