@@ -10,6 +10,8 @@ rand.workspace=true
 rand_chacha.workspace=true
 rf-types={path="../rf-types"}
 thiserror.workspace=true
+serde_json.workspace=true
+serde.workspace=true
 
 [features]
 default = []
@@ -18,3 +20,6 @@ hackrf = []
 [[example]]
 name = "hackrf-diagnostic"
 required-features = ["hackrf"]
+
+[dev-dependencies]
+tokio.workspace = true

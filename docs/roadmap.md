@@ -5,17 +5,34 @@
 - Rust workspace, generic IQ source, deterministic mock scene, FFT/PSD, binary v1 frames, localhost REST/WebSocket server.
 - React live workstation, Canvas spectrum, WebGL2 ring-texture waterfall, controls, diagnostics, Tauri and rfscopeR scaffolds.
 
-## Current: milestone 2
+## Current receive-side implementation session
 
 - Completed control slice: optional official libhackrf FFI, enumeration, selected-device open/close, queried metadata, documented board capability profiles, RX configuration, generic API/UI controls and explicit hardware diagnostic.
 - Locally verified against HackRF Pro: metadata, frequency, sample rate, IF/baseband gain, filters, close/reopen. No sample reception or RF accuracy claim.
-- Next narrow slice: bounded RX callback ingestion through the shared IQ/FFT path, stop/disconnect handling, and hardware sample-integrity checks. Hardware streaming remains unimplemented.
+- RX implementation: bounded official callback, common IQ/FFT pipeline, start/stop/reconfiguration, diagnostics and live frontend controls. Hardware throughput/lifecycle verified; visual acceptance remains blocked by unavailable browser automation. See [validation](rx-validation.md).
 
 ## Next
+
+Virtual-receiver channel extraction, bounded admission, API controls and spectrum
+overlays are implemented; see [VFO status](vfo.md). AM/NFM/USB/LSB demodulation
+is implemented and synthetically tested; see [demodulation](demodulation.md).
+The fixed-rate Rust/browser audio pipeline is implemented; speaker playback remains
+untested because browser automation is unavailable. See [audio](audio.md).
+SigMF raw IQ recording with a bounded writer and lifecycle API is implemented; see
+[recording](recording.md).
+SigMF playback through the common IQ/DSP pipeline is implemented; see
+[playback](playback.md).
+Initial uncalibrated spectrum measurements and `/api/v1/analysis` are implemented.
+rfscopeR now includes low-rate status/device/VFO/session/recording/detection/query helpers and base-R plotting functions.
+The R package can read exported Parquet observations through the optional DuckDB CLI.
+Versioned SQLite metadata migrations, session/recording indexes, Arrow-compatible Parquet observation export, and an optional CLI-backed DuckDB query boundary are implemented.
+Structured signal markers and bounded SNR-threshold event lifecycles are available through the API; events are currently live-memory diagnostics rather than durable records.
+The web shell now provides functional Live, Receivers, Recordings, Playback, Analysis, Diagnostics, Settings, Signals, and Workspaces views. Saved workspaces restore capture settings and VFO configurations; VFO runtime IDs are intentionally recreated on restore.
+The Live view supports basic 1 kHz keyboard capture tuning with left/right arrows when an editable control is not focused.
 
 1. VFO translation/filtering, AM/NFM, 48 kHz browser audio, multiple-VFO model.
 2. Atomic SigMF recording/indexing and file playback through `IqSource`.
 3. Signal measurements/events, SQLite + Parquet/DuckDB and useful rfscopeR queries.
-4. Capability-driven time-multiplexed HackRF sweep.
+4. Workstation views and persistence. Sweep and TX are out of scope for this session.
 
 SAM, WFM/stereo, SSB/CW, triggered buffers, authentication/TLS deployment, multi-device, plugins, and RFScope Lab remain aspirational.

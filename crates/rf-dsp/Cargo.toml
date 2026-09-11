@@ -6,3 +6,4 @@ license.workspace=true
 [dependencies]
 num-complex.workspace=true
 rustfft.workspace=true
+serde.workspace=true

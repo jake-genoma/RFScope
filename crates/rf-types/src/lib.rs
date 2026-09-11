@@ -1,6 +1,79 @@
 //! Stable domain and wire-adjacent types shared by RFScope services.
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReceiverMode {
+    Am,
+    Nfm,
+    Usb,
+    Lsb,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct VfoConfiguration {
+    pub name: String,
+    pub frequency_hz: u64,
+    pub mode: ReceiverMode,
+    pub bandwidth_hz: u32,
+    /// Uncalibrated channel-power threshold in dBFS; null disables squelch.
+    pub squelch_dbfs: Option<f32>,
+    pub agc: bool,
+    pub volume: f32,
+    pub mute: bool,
+    pub solo: bool,
+    #[serde(default = "default_audio_highpass")]
+    pub audio_highpass_hz: u32,
+    #[serde(default = "default_audio_lowpass")]
+    pub audio_lowpass_hz: u32,
+}
+pub fn default_audio_highpass() -> u32 {
+    80
+}
+pub fn default_audio_lowpass() -> u32 {
+    5000
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Vfo {
+    pub id: String,
+    pub configuration: VfoConfiguration,
+    pub recording: bool,
+    pub output_rate_hz: f64,
+    pub processed_samples: u64,
+    pub demodulated_samples: u64,
+    pub demodulated_peak: f32,
+    pub audio_rate_hz: u32,
+    pub audio_samples: u64,
+    pub audio_frames: u64,
+    pub audio_peak: f32,
+    pub squelch_open: bool,
+    pub audio_active: bool,
+    pub channel_power_dbfs: f32,
+    pub suspended_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SignalMarker {
+    pub id: String,
+    pub frequency_hz: u64,
+    pub label: String,
+    pub color: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SignalEvent {
+    pub id: String,
+    pub start_frequency_hz: u64,
+    pub end_frequency_hz: u64,
+    pub start_time_unix_ns: u64,
+    pub end_time_unix_ns: Option<u64>,
+    pub peak_dbfs: f32,
+    pub snr_db: f32,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct DeviceDescriptor {
     pub id: String,
@@ -40,7 +113,7 @@ pub struct DeviceState {
     pub running: bool,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceStatePatch {
     pub center_frequency_hz: Option<u64>,
@@ -53,9 +126,19 @@ pub struct DeviceStatePatch {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Diagnostics {
+    pub audio_clients: u64,
+    pub audio_lagged_frames: u64,
+    pub stream_faults: u64,
+    pub received_bytes: u64,
+    pub received_blocks: u64,
+    pub dropped_iq_blocks: u64,
+    pub dropped_iq_bytes: u64,
+    pub invalid_iq_blocks: u64,
+    pub hardware_streaming: bool,
     pub received_samples: u64,
     pub fft_frames: u64,
     pub dropped_visualization_frames: u64,
+    pub dropped_event_persistence: u64,
     pub websocket_clients: u64,
 }
 
@@ -86,6 +169,7 @@ pub struct DeviceSelection {
     pub capabilities: DeviceCapabilities,
     pub metadata: std::collections::BTreeMap<String, String>,
     pub opened: bool,
+    pub running: bool,
     pub supports_iq_streaming: bool,
     pub configuration: Option<ReceiverConfiguration>,
 }
@@ -104,6 +188,8 @@ pub enum DeviceCommand {
     },
     Open,
     Close,
+    Start,
+    Stop,
     Configure {
         configuration: ReceiverConfiguration,
     },

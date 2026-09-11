@@ -1,6 +1,6 @@
 # RFScope
 
-RFScope is an RX-focused, cross-platform SDR workstation foundation: a Rust radio/DSP server, a React workstation with Canvas/WebGL rendering, a Tauri 2 desktop shell, and an R analytics boundary. The current **milestone 1** is a hardware-independent live mock spectrum—not a finished radio.
+RFScope is an RX-focused, cross-platform SDR workstation foundation: a Rust radio/DSP server, a React workstation with Canvas/WebGL rendering, a Tauri 2 desktop shell, and an R analytics boundary. The receive pipeline supports deterministic mock IQ and optional live HackRF RX. The wider workstation remains in development.
 
 ## What works
 
@@ -25,7 +25,7 @@ Or use `just demo` and `just dev`. Run `just test` and `just check` for verifica
 
 ## HackRF status and prerequisites
 
-The optional HackRF control backend uses official Great Scott Gadgets `libhackrf` and has been tested against a locally connected HackRF Pro for enumeration, metadata, open/close, and receiver configuration. Run `cargo run -p rf-server --features hackrf` to enable it. Hardware IQ streaming is the next milestone; the live spectrum remains mock-only. See [HackRF integration](docs/hackrf.md) for the explicit hardware diagnostic and verification limits. Fedora development packages are typically installed with `sudo dnf install hackrf-devel`; Debian/Ubuntu use `sudo apt install libhackrf-dev hackrf`. Do not change udev rules blindly—follow distribution/Great Scott Gadgets guidance. The mock build has no libhackrf dependency.
+The optional HackRF control backend uses official Great Scott Gadgets `libhackrf` and has been tested against a locally connected HackRF Pro for enumeration, metadata, open/close, and receiver configuration. Run `cargo run -p rf-server --release --features hackrf` to enable it. Bounded RX streaming feeds the same FFT and binary spectrum protocol as mock IQ. Open a device, then press START RX. See [HackRF integration](docs/hackrf.md) for the explicit hardware diagnostic and verification limits. Fedora development packages are typically installed with `sudo dnf install hackrf-devel`; Debian/Ubuntu use `sudo apt install libhackrf-dev hackrf`. Do not change udev rules blindly—follow distribution/Great Scott Gadgets guidance. The mock build has no libhackrf dependency.
 
 ## Architecture
 

@@ -1,17 +1,27 @@
 //! Capability-driven SDR source abstraction and deterministic mock backend.
 pub mod control;
+pub mod file;
 #[cfg(feature = "hackrf")]
 mod hackrf;
+pub mod stream;
 use async_trait::async_trait;
 use num_complex::Complex32;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use rf_types::{DeviceCapabilities, DeviceDescriptor, DeviceState, NumericRange};
-use std::f32::consts::TAU;
+use std::f64::consts::TAU;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum DeviceError {
+    #[error("no IQ available")]
+    NoData,
+    #[error("IQ stream: {0}")]
+    Stream(String),
+    #[error("file source: {0}")]
+    File(String),
+    #[error("playback reached end of file")]
+    EndOfFile,
     #[error("value {value} is outside {minimum}..={maximum}")]
     OutOfRange {
         value: u64,
@@ -26,7 +36,7 @@ pub trait IqSource: Send {
     fn capabilities(&self) -> DeviceCapabilities;
     fn state(&self) -> DeviceState;
     fn configure(&mut self, center_hz: u64, sample_rate_hz: u32) -> Result<(), DeviceError>;
-    async fn read(&mut self, output: &mut [Complex32]) -> Result<(), DeviceError>;
+    async fn read(&mut self, output: &mut [Complex32]) -> Result<usize, DeviceError>;
 }
 
 pub struct MockSource {
@@ -104,21 +114,23 @@ impl IqSource for MockSource {
         self.state.sample_rate_hz = rate;
         Ok(())
     }
-    async fn read(&mut self, output: &mut [Complex32]) -> Result<(), DeviceError> {
-        let rate = self.state.sample_rate_hz as f32;
+    async fn read(&mut self, output: &mut [Complex32]) -> Result<usize, DeviceError> {
+        let rate = self.state.sample_rate_hz as f64;
         for (offset, sample) in output.iter_mut().enumerate() {
-            let t = (self.sample_index + offset as u64) as f32 / rate;
+            let t = (self.sample_index + offset as u64) as f64 / rate;
             let cw = (TAU * (-300_000.0) * t).sin_cos();
             let am = (1.0 + 0.55 * (TAU * 1_000.0 * t).sin()) * 0.35;
             let carrier = (TAU * 0.0 * t).sin_cos();
             let fm_phase = TAU * 400_000.0 * t + 2.2 * (TAU * 1_500.0 * t).sin();
             let fm = fm_phase.sin_cos();
             *sample = Complex32::new(
-                cw.1 * 0.22 + carrier.1 * am + fm.1 * 0.25 + self.rng.random_range(-0.025..0.025),
-                cw.0 * 0.22 + carrier.0 * am + fm.0 * 0.25 + self.rng.random_range(-0.025..0.025),
+                (cw.1 * 0.22 + carrier.1 * am + fm.1 * 0.25) as f32
+                    + self.rng.random_range(-0.025..0.025),
+                (cw.0 * 0.22 + carrier.0 * am + fm.0 * 0.25) as f32
+                    + self.rng.random_range(-0.025..0.025),
             );
         }
         self.sample_index += output.len() as u64;
-        Ok(())
+        Ok(output.len())
     }
 }

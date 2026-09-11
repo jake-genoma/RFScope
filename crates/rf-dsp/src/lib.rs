@@ -1,4 +1,8 @@
 //! Allocation-conscious FFT/PSD processing.
+pub mod analysis;
+pub mod audio;
+pub mod channel;
+pub mod demod;
 use num_complex::Complex32;
 use rustfft::{Fft, FftPlanner};
 use std::{f32::consts::PI, sync::Arc};

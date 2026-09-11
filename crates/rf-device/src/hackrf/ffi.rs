@@ -1,5 +1,5 @@
 //! Minimal ABI declarations from official libhackrf 2026.01.3 hackrf.h.
-//! No RX callbacks, TX functions, or raw pointers are exposed outside this backend.
+//! No TX functions or raw pointers are exposed outside this backend.
 use std::ffi::{c_char, c_int, c_void};
 #[repr(C)]
 pub struct Device {
@@ -20,7 +20,23 @@ pub struct PartSerial {
     pub part_id: [u32; 2],
     pub serial_no: [u32; 4],
 }
+#[repr(C)]
+pub struct Transfer {
+    pub device: *mut Device,
+    pub buffer: *mut u8,
+    pub buffer_length: c_int,
+    pub valid_length: c_int,
+    pub rx_ctx: *mut c_void,
+    pub unused_context: *mut c_void,
+}
 extern "C" {
+    pub fn hackrf_start_rx(
+        device: *mut Device,
+        callback: unsafe extern "C" fn(*mut Transfer) -> c_int,
+        context: *mut c_void,
+    ) -> c_int;
+    pub fn hackrf_stop_rx(device: *mut Device) -> c_int;
+    pub fn hackrf_is_streaming(device: *mut Device) -> c_int;
     pub fn hackrf_init() -> c_int;
     pub fn hackrf_exit() -> c_int;
     pub fn hackrf_library_version() -> *const c_char;
