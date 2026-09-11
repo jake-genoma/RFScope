@@ -48,5 +48,8 @@ finalization. The live HackRF Pro check on 2026-09-10 ran at 8 MS/s for 1.207 s:
 18,874,368 bytes and 9,437,184 samples were written, with zero drops and zero
 write errors. Metadata matched `ci8_le`, 8 MS/s and the accepted center frequency.
 The final test wrote under `/tmp/rfscope-capture-test`; no repository data was
-created. Long-duration disk throughput, disk-full behavior, unplug during a
-recording, and hardware control-change metadata remain untested.
+created. On 2026-09-11, the HackRF Pro was recorded at 2 MS/s for 8.054 seconds:
+32,243,712 bytes / 16,121,856 samples, zero dropped blocks, and zero data or
+metadata write errors. A 100 kHz retune created a capture boundary at sample
+9,306,112 and a `device_settings_changed` annotation. Long-duration disk
+throughput, disk-full behavior, and unplug during a recording remain untested.
