@@ -16,6 +16,19 @@ rfscope_recordings <- function(connection = rfscope_connect()) rfscope_get(conne
 rfscope_detections <- function(connection = rfscope_connect()) rfscope_get(connection, "/api/v1/detections")
 rfscope_query <- function(connection = rfscope_connect(), path = "/api/v1/analysis") rfscope_get(connection, path)
 
+#' Read an exported Parquet observation file through DuckDB
+#' @param path Parquet file path.
+#' @param limit Maximum rows to return.
+#' @export
+rfscope_read_parquet <- function(path, limit = 1000) {
+  executable <- Sys.getenv("RFSCOPE_DUCKDB_BIN", "duckdb")
+  if (!nzchar(Sys.which(executable))) stop("DuckDB executable not found; install duckdb or set RFSCOPE_DUCKDB_BIN")
+  escaped <- gsub("'", "''", path, fixed = TRUE)
+  sql <- sprintf("SELECT * FROM read_parquet('%s') LIMIT %d", escaped, min(as.integer(limit), 100000L))
+  output <- system2(executable, c("-json", "-c", sql), stdout = TRUE, stderr = TRUE)
+  jsonlite::fromJSON(paste(output, collapse = ""))
+}
+
 plot_rf_occupancy <- function(data, frequency = "frequency_hz", occupancy = "occupancy") graphics::plot(data[[frequency]], data[[occupancy]], type = "l", xlab = "Frequency (Hz)", ylab = "Occupancy")
 plot_signal_activity <- function(data, time = "time", activity = "activity") graphics::plot(data[[time]], data[[activity]], type = "l", xlab = "Time", ylab = "Activity")
 summarize_frequency <- function(data, frequency = "peak_frequency_hz") stats::aggregate(data[[frequency]], list(frequency = data[[frequency]]), FUN = length)

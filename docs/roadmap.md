@@ -24,6 +24,7 @@ SigMF playback through the common IQ/DSP pipeline is implemented; see
 [playback](playback.md).
 Initial uncalibrated spectrum measurements and `/api/v1/analysis` are implemented.
 rfscopeR now includes low-rate status/device/VFO/session/recording/detection/query helpers and base-R plotting functions.
+The R package can read exported Parquet observations through the optional DuckDB CLI.
 Versioned SQLite metadata migrations, session/recording indexes, Arrow-compatible Parquet observation export, and an optional CLI-backed DuckDB query boundary are implemented.
 Structured signal markers are available through the API; automatic event duration tracking remains outstanding.
 The web shell now provides functional Live, Receivers, Recordings, Playback, Analysis, Diagnostics, Settings, Signals, and Workspaces views; persistence-backed workflows remain incremental.

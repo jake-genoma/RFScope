@@ -6,4 +6,7 @@
 conn <- rfscope_connect()
 rfscope_status(conn)
 rfscope_query(conn)
+rfscope_read_parquet("observations.parquet")
 ```
+
+`rfscope_read_parquet()` uses DuckDB's CLI when installed. The dependency is optional and is never used for real-time IQ processing.
