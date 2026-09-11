@@ -28,6 +28,7 @@ The R package can read exported Parquet observations through the optional DuckDB
 Versioned SQLite metadata migrations, session/recording indexes, Arrow-compatible Parquet observation export, and an optional CLI-backed DuckDB query boundary are implemented.
 Structured signal markers and bounded SNR-threshold event lifecycles are available through the API; events are currently live-memory diagnostics rather than durable records.
 The web shell now provides functional Live, Receivers, Recordings, Playback, Analysis, Diagnostics, Settings, Signals, and Workspaces views. Saved workspaces restore capture settings and VFO configurations; VFO runtime IDs are intentionally recreated on restore.
+The Live view supports basic 1 kHz keyboard capture tuning with left/right arrows when an editable control is not focused.
 
 1. VFO translation/filtering, AM/NFM, 48 kHz browser audio, multiple-VFO model.
 2. Atomic SigMF recording/indexing and file playback through `IqSource`.

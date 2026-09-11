@@ -101,6 +101,17 @@ function App() {
     const frame = lastFrame.current;
     if (frame && renderer.current) { renderer.current.draw(frame.bins); renderer.current.overlays(Number(frame.centerHz), frame.sampleRateHz, vfos, markers); }
   }, [vfos, markers]);
+  useEffect(() => {
+    const tune = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.matches("input, select, textarea") || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
+      if (!status?.state.center_frequency_hz) return;
+      event.preventDefault();
+      void patch({ center_frequency_hz: Math.max(100_000, status.state.center_frequency_hz + (event.key === "ArrowRight" ? 1_000 : -1_000)) });
+    };
+    window.addEventListener("keydown", tune);
+    return () => window.removeEventListener("keydown", tune);
+  }, [status?.state.center_frequency_hz]);
   async function patch(body: object) {
     try {
       const response = await fetch(`${API}/device/state`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -228,6 +239,7 @@ function App() {
         }}>{[2000000, 8000000, 10000000, 20000000].map(rate => <option key={rate} value={rate}>{rate / 1e6} MS/s</option>)}</select></label>
         <label>FFT <select value={status?.fft_size ?? 2048} onChange={e => void patch({ fft_size: Number(e.target.value) })}>{[1024, 2048, 4096, 8192, 16384].map(size => <option key={size}>{size}</option>)}</select></label>
         <button className="rx" onClick={() => void patch({ running: !status?.state.running })}>{status?.state.running ? "STOP RX" : "START RX"}</button>
+        <small>←/→ tune 1 kHz</small>
       </section>
       <section className="scope"><div className="title">SPECTRUM <small>dBFS</small></div><canvas ref={spectrum} /><div className="axis"><span>− BW/2</span><span>{((status?.state.center_frequency_hz ?? 0) / 1e6).toFixed(3)} MHz</span><span>+ BW/2</span></div></section>
       <section className="scope waterfall"><div className="title">WATERFALL <small>newest at top</small></div><canvas ref={waterfall} /></section>
