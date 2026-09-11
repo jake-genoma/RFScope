@@ -11,4 +11,4 @@ The API is intentionally small for the first playback milestone:
 
 Only `ci8_le` SigMF captures are accepted initially. The sibling `.sigmf-data` file must contain an even number of bytes. Playback does not retune the SDR and cannot be loaded while a native hardware source is selected. The web workstation exposes a path-based load/play/pause/eject control.
 
-The playback panel also accepts an exact sample position for seek. Seeking preserves the common downstream DSP path and resets no hardware state.
+The playback panel also accepts an exact sample position for seek. Seeking preserves the common downstream DSP path and resets no hardware state. It also stores named bookmarks in SQLite, linked to the loaded recording session ID; each bookmark can seek directly to its saved sample position.

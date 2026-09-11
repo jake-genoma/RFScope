@@ -22,6 +22,7 @@ type Analysis = { peak_frequency_hz: number; peak_dbfs: number; noise_floor_dbfs
 type SignalEvent = { id: string; start_frequency_hz: number; end_frequency_hz: number; start_time_unix_ns: number; end_time_unix_ns: number | null; peak_dbfs: number; snr_db: number };
 type Workspace = { id: string; name: string; payload_json: string };
 type WorkspacePayload = { center_frequency_hz?: number; sample_rate_hz?: number; vfos?: VfoConfiguration[] };
+type Bookmark = { id: number; recording_id: string | null; sample_index: number; label: string };
 function App() {
   const [view, setView] = useState("Live");
   const [status, setStatus] = useState<Status | null>(null);
@@ -34,6 +35,8 @@ function App() {
   const [detections, setDetections] = useState<SignalEvent[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceName, setWorkspaceName] = useState("Live");
+  const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
+  const [bookmarkLabel, setBookmarkLabel] = useState("Bookmark");
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [error, setError] = useState("");
   const selectedDevice = useRef<DeviceSelection | undefined>(undefined);
@@ -45,9 +48,9 @@ function App() {
   const lastFrame = useRef<ReturnType<typeof decodeSpectrum> | null>(null);
   async function refresh() {
     try {
-      const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse, markerResponse, detectionResponse, workspaceResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`), fetch(`${API}/markers`), fetch(`${API}/detections`), fetch(`${API}/workspaces`)]);
-      if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok || !markerResponse.ok || !detectionResponse.ok || !workspaceResponse.ok) throw new Error("Status request failed");
-      setStatus(await stateResponse.json() as Status); setVfos(await vfoResponse.json() as Vfo[]); setRecording(await recordingResponse.json() as Recording | null); setPlayback(await playbackResponse.json() as Playback | null); setAnalysis(await analysisResponse.json() as Analysis | null); setMarkers(await markerResponse.json() as Marker[]); setDetections(await detectionResponse.json() as SignalEvent[]); setWorkspaces(await workspaceResponse.json() as Workspace[]);
+      const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse, markerResponse, detectionResponse, workspaceResponse, bookmarkResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`), fetch(`${API}/markers`), fetch(`${API}/detections`), fetch(`${API}/workspaces`), fetch(`${API}/bookmarks`)]);
+      if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok || !markerResponse.ok || !detectionResponse.ok || !workspaceResponse.ok || !bookmarkResponse.ok) throw new Error("Status request failed");
+      setStatus(await stateResponse.json() as Status); setVfos(await vfoResponse.json() as Vfo[]); setRecording(await recordingResponse.json() as Recording | null); setPlayback(await playbackResponse.json() as Playback | null); setAnalysis(await analysisResponse.json() as Analysis | null); setMarkers(await markerResponse.json() as Marker[]); setDetections(await detectionResponse.json() as SignalEvent[]); setWorkspaces(await workspaceResponse.json() as Workspace[]); setBookmarks(await bookmarkResponse.json() as Bookmark[]);
     } catch (error) { setError(String(error)); }
   }
   useEffect(() => {
@@ -138,6 +141,21 @@ function App() {
       await refresh(); setError("");
     } catch (error) { setError(String(error)); }
   }
+  async function saveBookmark() {
+    if (!playback?.loaded || !bookmarkLabel.trim()) return;
+    try {
+      const response = await fetch(`${API}/bookmarks`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ recording_id: playback.session_id, sample_index: playback.position_samples, label: bookmarkLabel.trim() }) });
+      if (!response.ok) throw new Error(await response.text());
+      await refresh(); setError("");
+    } catch (error) { setError(String(error)); }
+  }
+  async function deleteBookmark(id: number) {
+    try {
+      const response = await fetch(`${API}/bookmarks/${id}`, { method: "DELETE" });
+      if (!response.ok && response.status !== 404) throw new Error(await response.text());
+      await refresh(); setError("");
+    } catch (error) { setError(String(error)); }
+  }
   const visible = !status?.device || status.device.supports_iq_streaming;
   return <main>
     <header><b>RF<span>Scope</span></b><nav>{["Live", "Receivers", "Recordings", "Playback", "Signals", "Analysis", "Workspaces", "Diagnostics", "Settings"].map(name => <button key={name} onClick={() => setView(name)} className={view === name ? "active" : ""}>{name}</button>)}</nav></header>
@@ -166,7 +184,7 @@ function App() {
     {view !== "Live" && <section className="panels workstation-view">
       {view === "Receivers" && <article><h3>Receivers</h3><VfoPanel vfos={vfos} center={status?.state.center_frequency_hz ?? 0} refresh={() => void refresh()} /></article>}
       {view === "Recordings" && <article><h3>Recordings</h3><p>{recording ? `${recording.id} · ${(recording.bytes_written / 1e6).toFixed(1)} MB · ${recording.dropped_blocks} dropped blocks` : "No active recording"}</p></article>}
-      {view === "Playback" && <article><h3>Playback timeline</h3><p>{playback?.loaded ? `${playback.session_id} · ${playback.position_samples.toLocaleString()} / ${playback.total_samples.toLocaleString()} samples` : "Load a SigMF metadata file above."}</p></article>}
+      {view === "Playback" && <article><h3>Playback timeline</h3><p>{playback?.loaded ? `${playback.session_id} · ${playback.position_samples.toLocaleString()} / ${playback.total_samples.toLocaleString()} samples` : "Load a SigMF metadata file above."}</p>{playback?.loaded && <><label>Bookmark <input aria-label="Bookmark label" value={bookmarkLabel} maxLength={256} onChange={event => setBookmarkLabel(event.target.value)} /></label><button onClick={() => void saveBookmark()}>Save at current sample</button><dl>{bookmarks.filter(bookmark => bookmark.recording_id === playback.session_id).map(bookmark => <React.Fragment key={bookmark.id}><dt>{bookmark.label} · {bookmark.sample_index.toLocaleString()}</dt><dd><button onClick={() => void playbackAction("PATCH", { action: "seek", position_samples: bookmark.sample_index })}>Seek</button><button onClick={() => void deleteBookmark(bookmark.id)}>Delete</button></dd></React.Fragment>)}</dl></>}</article>}
       {view === "Signals" && <article><h3>Signals</h3>{detections.length ? <dl>{detections.map(event => <React.Fragment key={event.id}><dt>{event.id} · {(event.start_frequency_hz / 1e6).toFixed(6)} MHz</dt><dd>{event.end_time_unix_ns == null ? "active" : "complete"} · {event.snr_db.toFixed(1)} dB SNR · {event.peak_dbfs.toFixed(1)} dBFS</dd></React.Fragment>)}</dl> : <p>No threshold events yet.</p>}</article>}
       {view === "Analysis" && <article><h3>Analysis</h3>{analysis ? <><button onClick={() => void addPeakMarker()}>Mark current peak</button><dl>{Object.entries(analysis).map(([key, value]) => <React.Fragment key={key}><dt>{key.replaceAll("_", " ")}</dt><dd>{value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</dd></React.Fragment>)}</dl><p>{markers.length} marker{markers.length === 1 ? "" : "s"} active</p></> : <p>Waiting for a spectrum frame.</p>}</article>}
       {view === "Workspaces" && <article><h3>Workspaces</h3><label>Name <input aria-label="Workspace name" value={workspaceName} maxLength={128} onChange={event => setWorkspaceName(event.target.value)} /></label><button onClick={() => void saveWorkspace()}>Save current workspace</button><p>Restoring applies capture settings and recreates saved VFO configurations with fresh runtime IDs.</p>{workspaces.length ? <dl>{workspaces.map(workspace => <React.Fragment key={workspace.id}><dt>{workspace.name}</dt><dd><button onClick={() => void loadWorkspace(workspace)}>Load</button><button onClick={() => void deleteWorkspace(workspace.id)}>Delete</button></dd></React.Fragment>)}</dl> : <p>No saved workspaces.</p>}</article>}
