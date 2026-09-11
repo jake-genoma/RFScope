@@ -1,4 +1,5 @@
 //! Versioned transactional metadata storage. Raw IQ remains in SigMF files.
+use rf_types::SignalEvent;
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::{path::Path, sync::Mutex};
@@ -49,6 +50,16 @@ pub struct StoredAnnotation {
     pub end_sample: u64,
     pub payload_json: String,
 }
+#[derive(Clone, Debug, Serialize, serde::Deserialize, PartialEq)]
+pub struct StoredSignalEvent {
+    pub id: String,
+    pub start_frequency_hz: u64,
+    pub end_frequency_hz: u64,
+    pub start_time_unix_ns: u64,
+    pub end_time_unix_ns: u64,
+    pub peak_dbfs: f32,
+    pub snr_db: f32,
+}
 
 pub struct Storage {
     connection: Mutex<Connection>,
@@ -81,7 +92,8 @@ impl Storage {
              CREATE TABLE IF NOT EXISTS bookmarks (id INTEGER PRIMARY KEY, recording_id TEXT REFERENCES recordings(id), sample_index INTEGER NOT NULL, label TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS annotations (id INTEGER PRIMARY KEY, recording_id TEXT REFERENCES recordings(id), start_sample INTEGER NOT NULL, end_sample INTEGER NOT NULL, payload_json TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS preferences (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS observations (id INTEGER PRIMARY KEY, session_id TEXT REFERENCES sessions(id), observed_at_unix_ns INTEGER NOT NULL, payload_json TEXT NOT NULL);",
+             CREATE TABLE IF NOT EXISTS observations (id INTEGER PRIMARY KEY, session_id TEXT REFERENCES sessions(id), observed_at_unix_ns INTEGER NOT NULL, payload_json TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS signal_events (id TEXT PRIMARY KEY, start_frequency_hz INTEGER NOT NULL, end_frequency_hz INTEGER NOT NULL, start_time_unix_ns INTEGER NOT NULL, end_time_unix_ns INTEGER NOT NULL, peak_dbfs REAL NOT NULL, snr_db REAL NOT NULL);",
         )?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         if version < 1 {
@@ -91,7 +103,42 @@ impl Storage {
             )?;
             connection.pragma_update(None, "user_version", 1)?;
         }
+        if version < 2 {
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version) VALUES (2)",
+                [],
+            )?;
+            connection.pragma_update(None, "user_version", 2)?;
+        }
         Ok(())
+    }
+    pub fn record_signal_event(&self, event: &SignalEvent) -> Result<(), StorageError> {
+        let Some(end_time_unix_ns) = event.end_time_unix_ns else {
+            return Ok(());
+        };
+        let connection = self.connection.lock().map_err(|_| StorageError::Poisoned)?;
+        connection.execute(
+            "INSERT OR REPLACE INTO signal_events(id,start_frequency_hz,end_frequency_hz,start_time_unix_ns,end_time_unix_ns,peak_dbfs,snr_db) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            params![event.id, event.start_frequency_hz, event.end_frequency_hz, event.start_time_unix_ns, end_time_unix_ns, event.peak_dbfs, event.snr_db],
+        )?;
+        Ok(())
+    }
+    pub fn signal_events(&self, limit: usize) -> Result<Vec<StoredSignalEvent>, StorageError> {
+        let connection = self.connection.lock().map_err(|_| StorageError::Poisoned)?;
+        let mut statement = connection.prepare("SELECT id,start_frequency_hz,end_frequency_hz,start_time_unix_ns,end_time_unix_ns,peak_dbfs,snr_db FROM signal_events ORDER BY end_time_unix_ns DESC LIMIT ?1")?;
+        let rows = statement.query_map(params![limit.min(4096) as i64], |row| {
+            Ok(StoredSignalEvent {
+                id: row.get(0)?,
+                start_frequency_hz: row.get(1)?,
+                end_frequency_hz: row.get(2)?,
+                start_time_unix_ns: row.get(3)?,
+                end_time_unix_ns: row.get(4)?,
+                peak_dbfs: row.get(5)?,
+                snr_db: row.get(6)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StorageError::from)
     }
     pub fn record_session(
         &self,
@@ -289,5 +336,17 @@ mod tests {
             .unwrap();
         assert_eq!(storage.annotations().unwrap()[0], annotation);
         assert!(storage.remove_annotation(annotation.id).unwrap());
+        storage
+            .record_signal_event(&SignalEvent {
+                id: "event-1".into(),
+                start_frequency_hz: 100,
+                end_frequency_hz: 101,
+                start_time_unix_ns: 10,
+                end_time_unix_ns: Some(20),
+                peak_dbfs: -10.0,
+                snr_db: 15.0,
+            })
+            .unwrap();
+        assert_eq!(storage.signal_events(10).unwrap()[0].id, "event-1");
     }
 }

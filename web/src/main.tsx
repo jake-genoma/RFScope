@@ -14,7 +14,7 @@ type Status = {
   fft_size: number;
   diagnostics: { received_bytes: number; dropped_iq_blocks: number; dropped_iq_bytes: number;
     hardware_streaming: boolean; stream_faults: number; received_samples: number;
-    fft_frames: number; dropped_visualization_frames: number; websocket_clients: number };
+    fft_frames: number; dropped_visualization_frames: number; dropped_event_persistence: number; websocket_clients: number };
 };
 type Recording = { id: string; directory: string; active: boolean; sample_rate_hz: number; center_frequency_hz: number; elapsed_ms: number; bytes_written: number; samples_written: number; queued_blocks: number; dropped_blocks: number; dropped_bytes: number; write_errors: number; projected_bytes_per_second: number; available_disk_bytes: number | null; last_error: string | null };
 type Playback = { loaded: boolean; metadata_path: string | null; data_path: string | null; session_id: string | null; hardware: string | null; center_frequency_hz: number; sample_rate_hz: number; total_samples: number; position_samples: number; playing: boolean; ended: boolean };

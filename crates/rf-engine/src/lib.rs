@@ -1,6 +1,7 @@
 //! Shared live/file-ready IQ pipeline and spectrum wire encoder.
 pub mod audio;
 pub mod duckdb;
+pub mod event_store;
 pub mod events;
 pub mod observations;
 pub mod playback;
@@ -40,6 +41,7 @@ pub struct Engine {
     pub observations: Arc<std::sync::Mutex<VecDeque<observations::Observation>>>,
     pub markers: Arc<RwLock<Vec<rf_types::SignalMarker>>>,
     pub events: Arc<std::sync::Mutex<events::EventTracker>>,
+    event_store: std::sync::Mutex<Option<event_store::EventStore>>,
     received: Arc<AtomicU64>,
     frame_count: Arc<AtomicU64>,
     dropped: Arc<AtomicU64>,
@@ -68,11 +70,37 @@ impl Engine {
             observations: Arc::new(std::sync::Mutex::new(VecDeque::with_capacity(4096))),
             markers: Arc::new(RwLock::new(Vec::new())),
             events: Arc::new(std::sync::Mutex::new(events::EventTracker::default())),
+            event_store: std::sync::Mutex::new(None),
             received: Arc::new(AtomicU64::new(0)),
             frame_count: Arc::new(AtomicU64::new(0)),
             dropped: Arc::new(AtomicU64::new(0)),
             clients: Arc::new(AtomicU64::new(0)),
         })
+    }
+    /// Starts the bounded SQLite writer outside the DSP loop when storage is configured.
+    pub fn enable_event_persistence(&self) {
+        let Some(storage) = self.storage.clone() else {
+            return;
+        };
+        if let Ok(mut writer) = self.event_store.lock() {
+            if writer.is_none() {
+                *writer = Some(event_store::EventStore::start(storage));
+            }
+        }
+    }
+    pub fn shutdown_event_persistence(&self) {
+        if let Ok(mut writer) = self.event_store.lock() {
+            if let Some(writer) = writer.take() {
+                writer.shutdown();
+            }
+        }
+    }
+    pub fn dropped_persisted_events(&self) -> u64 {
+        self.event_store
+            .lock()
+            .ok()
+            .and_then(|writer| writer.as_ref().map(event_store::EventStore::dropped))
+            .unwrap_or(0)
     }
     pub fn diagnostics(&self) -> Diagnostics {
         let counters = self.stream_counters.read().ok();
@@ -90,6 +118,7 @@ impl Engine {
             received_samples: self.received.load(Ordering::Relaxed),
             fft_frames: self.frame_count.load(Ordering::Relaxed),
             dropped_visualization_frames: self.dropped.load(Ordering::Relaxed),
+            dropped_event_persistence: self.dropped_persisted_events(),
             websocket_clients: self.clients.load(Ordering::Relaxed),
         }
     }
@@ -237,7 +266,13 @@ impl Engine {
                     });
                 }
                 if let Ok(mut events) = self.events.lock() {
-                    events.observe(timestamp_ns, &measurements);
+                    if let Some(event) = events.observe(timestamp_ns, &measurements) {
+                        if let Ok(writer) = self.event_store.lock() {
+                            if let Some(writer) = writer.as_ref() {
+                                writer.enqueue(event);
+                            }
+                        }
+                    }
                 }
             }
             sequence += 1;

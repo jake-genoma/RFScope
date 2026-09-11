@@ -138,6 +138,7 @@ pub struct Diagnostics {
     pub received_samples: u64,
     pub fft_frames: u64,
     pub dropped_visualization_frames: u64,
+    pub dropped_event_persistence: u64,
     pub websocket_clients: u64,
 }
 

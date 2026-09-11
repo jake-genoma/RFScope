@@ -30,7 +30,12 @@ impl Default for EventTracker {
 }
 
 impl EventTracker {
-    pub fn observe(&mut self, timestamp_ns: u64, measurement: &SpectrumMeasurements) {
+    /// Returns an event only when its quiet-frame lifecycle completes.
+    pub fn observe(
+        &mut self,
+        timestamp_ns: u64,
+        measurement: &SpectrumMeasurements,
+    ) -> Option<SignalEvent> {
         if measurement.snr_db >= self.threshold_db {
             if let Some(active) = self.active.as_mut() {
                 active.quiet_frames = 0;
@@ -42,7 +47,7 @@ impl EventTracker {
                 let frequency = measurement.peak_frequency_hz.round().max(0.0) as u64;
                 self.active = Some(ActiveEvent {
                     event: SignalEvent {
-                        id: format!("event-{:x}", self.next_id),
+                        id: format!("event-{timestamp_ns:x}-{:x}", self.next_id),
                         start_frequency_hz: frequency,
                         end_frequency_hz: frequency,
                         start_time_unix_ns: timestamp_ns,
@@ -54,24 +59,21 @@ impl EventTracker {
                 });
                 self.next_id += 1;
             }
-            return;
+            return None;
         }
-        let Some(active) = self.active.as_mut() else {
-            return;
-        };
+        let active = self.active.as_mut()?;
         active.quiet_frames = active.quiet_frames.saturating_add(1);
         if active.quiet_frames < QUIET_FRAMES_TO_CLOSE {
-            return;
+            return None;
         }
-        let Some(active) = self.active.take() else {
-            return;
-        };
+        let active = self.active.take()?;
         let mut completed = active.event;
         completed.end_time_unix_ns = Some(timestamp_ns);
         if self.completed.len() >= MAX_EVENTS {
             self.completed.pop_front();
         }
-        self.completed.push_back(completed);
+        self.completed.push_back(completed.clone());
+        Some(completed)
     }
     pub fn events(&self) -> Vec<SignalEvent> {
         let mut events: Vec<_> = self.completed.iter().cloned().collect();
@@ -102,11 +104,11 @@ mod tests {
     #[test]
     fn event_has_bounded_lifecycle_and_duration() {
         let mut tracker = EventTracker::default();
-        tracker.observe(10, &measurement(20.0));
+        assert!(tracker.observe(10, &measurement(20.0)).is_none());
         assert_eq!(tracker.events().len(), 1);
-        tracker.observe(20, &measurement(0.0));
-        tracker.observe(30, &measurement(0.0));
-        tracker.observe(40, &measurement(0.0));
+        assert!(tracker.observe(20, &measurement(0.0)).is_none());
+        assert!(tracker.observe(30, &measurement(0.0)).is_none());
+        assert!(tracker.observe(40, &measurement(0.0)).is_some());
         let event = tracker.events().pop().unwrap();
         assert_eq!(event.start_time_unix_ns, 10);
         assert_eq!(event.end_time_unix_ns, Some(40));

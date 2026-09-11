@@ -52,6 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage_path = std::env::var("RFSCOPE_DB").unwrap_or_else(|_| "rfscope.sqlite3".into());
     let storage = rf_engine::storage::Storage::open(storage_path)?;
     let engine = Engine::mock_with_storage(Some(Arc::new(storage)));
+    engine.enable_event_persistence();
     let controller = DeviceController::new()?;
     let dsp_engine = engine.clone();
     let dsp_devices = controller.clone();
@@ -139,6 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .shutdown
         .store(true, std::sync::atomic::Ordering::Release);
     dsp_thread.join().map_err(|_| "DSP thread panicked")?;
+    state.engine.shutdown_event_persistence();
     device_call(&state, |d| d.shutdown())
         .await
         .map_err(|(_, message)| message)?;
@@ -269,14 +271,35 @@ async fn recordings(
 ) -> Json<Vec<rf_engine::recording::RecordingSummary>> {
     Json(e.engine.recording.status().into_iter().collect())
 }
-async fn detections(State(e): State<Arc<AppState>>) -> Json<Vec<rf_types::SignalEvent>> {
-    Json(
-        e.engine
-            .events
-            .lock()
-            .map(|events| events.events())
-            .unwrap_or_default(),
-    )
+async fn detections(
+    State(e): State<Arc<AppState>>,
+) -> Result<Json<Vec<rf_types::SignalEvent>>, ApiError> {
+    let mut events = std::collections::BTreeMap::new();
+    if let Some(storage) = &e.engine.storage {
+        for event in storage
+            .signal_events(4096)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        {
+            events.insert(
+                event.id.clone(),
+                rf_types::SignalEvent {
+                    id: event.id,
+                    start_frequency_hz: event.start_frequency_hz,
+                    end_frequency_hz: event.end_frequency_hz,
+                    start_time_unix_ns: event.start_time_unix_ns,
+                    end_time_unix_ns: Some(event.end_time_unix_ns),
+                    peak_dbfs: event.peak_dbfs,
+                    snr_db: event.snr_db,
+                },
+            );
+        }
+    }
+    if let Ok(live) = e.engine.events.lock() {
+        for event in live.events() {
+            events.insert(event.id.clone(), event);
+        }
+    }
+    Ok(Json(events.into_values().collect()))
 }
 async fn workspaces(
     State(e): State<Arc<AppState>>,
