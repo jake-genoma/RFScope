@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { API, SPECTRUM_WS } from "./api";
 import { DevicePanel, type DeviceSelection } from "./DevicePanel";
-import { VfoPanel, type Vfo } from "./VfoPanel";
+import { VfoPanel, type Vfo, type VfoConfiguration } from "./VfoPanel";
 import { AudioPlayer } from "./AudioPlayer";
 import { decodeSpectrum } from "./protocol";
 import { SpectrumRenderer, WaterfallRenderer, type Marker } from "./renderers";
@@ -20,6 +20,8 @@ type Recording = { id: string; directory: string; active: boolean; sample_rate_h
 type Playback = { loaded: boolean; metadata_path: string | null; data_path: string | null; session_id: string | null; hardware: string | null; center_frequency_hz: number; sample_rate_hz: number; total_samples: number; position_samples: number; playing: boolean; ended: boolean };
 type Analysis = { peak_frequency_hz: number; peak_dbfs: number; noise_floor_dbfs: number; snr_db: number; bandwidth_3db_hz: number; bandwidth_6db_hz: number; occupied_bandwidth_99_hz: number; amplitude_mean_dbfs: number; amplitude_min_dbfs: number; amplitude_max_dbfs: number };
 type SignalEvent = { id: string; start_frequency_hz: number; end_frequency_hz: number; start_time_unix_ns: number; end_time_unix_ns: number | null; peak_dbfs: number; snr_db: number };
+type Workspace = { id: string; name: string; payload_json: string };
+type WorkspacePayload = { center_frequency_hz?: number; sample_rate_hz?: number; vfos?: VfoConfiguration[] };
 function App() {
   const [view, setView] = useState("Live");
   const [status, setStatus] = useState<Status | null>(null);
@@ -30,6 +32,8 @@ function App() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [markers, setMarkers] = useState<Marker[]>([]);
   const [detections, setDetections] = useState<SignalEvent[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [workspaceName, setWorkspaceName] = useState("Live");
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [error, setError] = useState("");
   const selectedDevice = useRef<DeviceSelection | undefined>(undefined);
@@ -41,19 +45,19 @@ function App() {
   const lastFrame = useRef<ReturnType<typeof decodeSpectrum> | null>(null);
   async function refresh() {
     try {
-      const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse, markerResponse, detectionResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`), fetch(`${API}/markers`), fetch(`${API}/detections`)]);
-      if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok || !markerResponse.ok || !detectionResponse.ok) throw new Error("Status request failed");
-      setStatus(await stateResponse.json() as Status); setVfos(await vfoResponse.json() as Vfo[]); setRecording(await recordingResponse.json() as Recording | null); setPlayback(await playbackResponse.json() as Playback | null); setAnalysis(await analysisResponse.json() as Analysis | null); setMarkers(await markerResponse.json() as Marker[]); setDetections(await detectionResponse.json() as SignalEvent[]);
+      const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse, markerResponse, detectionResponse, workspaceResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`), fetch(`${API}/markers`), fetch(`${API}/detections`), fetch(`${API}/workspaces`)]);
+      if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok || !markerResponse.ok || !detectionResponse.ok || !workspaceResponse.ok) throw new Error("Status request failed");
+      setStatus(await stateResponse.json() as Status); setVfos(await vfoResponse.json() as Vfo[]); setRecording(await recordingResponse.json() as Recording | null); setPlayback(await playbackResponse.json() as Playback | null); setAnalysis(await analysisResponse.json() as Analysis | null); setMarkers(await markerResponse.json() as Marker[]); setDetections(await detectionResponse.json() as SignalEvent[]); setWorkspaces(await workspaceResponse.json() as Workspace[]);
     } catch (error) { setError(String(error)); }
   }
   useEffect(() => {
     let alive = true;
     const poll = async () => {
       try {
-        const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse, markerResponse, detectionResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`), fetch(`${API}/markers`), fetch(`${API}/detections`)]);
-        if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok || !markerResponse.ok || !detectionResponse.ok) throw new Error("Status request failed");
-        const state = await stateResponse.json() as Status, receivers = await vfoResponse.json() as Vfo[], currentRecording = await recordingResponse.json() as Recording | null, currentPlayback = await playbackResponse.json() as Playback | null, currentAnalysis = await analysisResponse.json() as Analysis | null, currentMarkers = await markerResponse.json() as Marker[], currentDetections = await detectionResponse.json() as SignalEvent[];
-        if (alive) { setStatus(state); setVfos(receivers); setRecording(currentRecording); setPlayback(currentPlayback); setAnalysis(currentAnalysis); setMarkers(currentMarkers); setDetections(currentDetections); }
+        const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse, markerResponse, detectionResponse, workspaceResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`), fetch(`${API}/markers`), fetch(`${API}/detections`), fetch(`${API}/workspaces`)]);
+        if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok || !markerResponse.ok || !detectionResponse.ok || !workspaceResponse.ok) throw new Error("Status request failed");
+        const state = await stateResponse.json() as Status, receivers = await vfoResponse.json() as Vfo[], currentRecording = await recordingResponse.json() as Recording | null, currentPlayback = await playbackResponse.json() as Playback | null, currentAnalysis = await analysisResponse.json() as Analysis | null, currentMarkers = await markerResponse.json() as Marker[], currentDetections = await detectionResponse.json() as SignalEvent[], savedWorkspaces = await workspaceResponse.json() as Workspace[];
+        if (alive) { setStatus(state); setVfos(receivers); setRecording(currentRecording); setPlayback(currentPlayback); setAnalysis(currentAnalysis); setMarkers(currentMarkers); setDetections(currentDetections); setWorkspaces(savedWorkspaces); }
       } catch { if (alive) setError("Backend offline — run `just demo`"); }
     };
     void poll(); const timer = setInterval(() => void poll(), 1000);
@@ -103,9 +107,35 @@ function App() {
   }
   async function saveWorkspace() {
     try {
-      const response = await fetch(`${API}/workspaces`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "live", name: "Live", payload_json: JSON.stringify({ center_frequency_hz: status?.state.center_frequency_hz, sample_rate_hz: status?.state.sample_rate_hz, vfos }) }) });
+      const name = workspaceName.trim();
+      if (!name) throw new Error("Workspace name is required");
+      const response = await fetch(`${API}/workspaces`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: `workspace-${Date.now()}`, name, payload_json: JSON.stringify({ center_frequency_hz: status?.state.center_frequency_hz, sample_rate_hz: status?.state.sample_rate_hz, vfos: vfos.map(vfo => vfo.configuration) }) }) });
       if (!response.ok) throw new Error(await response.text());
+      await refresh();
       setError("");
+    } catch (error) { setError(String(error)); }
+  }
+  async function loadWorkspace(workspace: Workspace) {
+    try {
+      const payload = JSON.parse(workspace.payload_json) as WorkspacePayload;
+      const response = await fetch(`${API}/device/state`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ center_frequency_hz: payload.center_frequency_hz, sample_rate_hz: payload.sample_rate_hz }) });
+      if (!response.ok) throw new Error(await response.text());
+      for (const vfo of vfos) {
+        const remove = await fetch(`${API}/vfos/${encodeURIComponent(vfo.id)}`, { method: "DELETE" });
+        if (!remove.ok) throw new Error(await remove.text());
+      }
+      for (const configuration of payload.vfos ?? []) {
+        const add = await fetch(`${API}/vfos`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(configuration) });
+        if (!add.ok) throw new Error(await add.text());
+      }
+      await refresh(); setError("");
+    } catch (error) { setError(String(error)); }
+  }
+  async function deleteWorkspace(id: string) {
+    try {
+      const response = await fetch(`${API}/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!response.ok && response.status !== 404) throw new Error(await response.text());
+      await refresh(); setError("");
     } catch (error) { setError(String(error)); }
   }
   const visible = !status?.device || status.device.supports_iq_streaming;
@@ -139,7 +169,7 @@ function App() {
       {view === "Playback" && <article><h3>Playback timeline</h3><p>{playback?.loaded ? `${playback.session_id} · ${playback.position_samples.toLocaleString()} / ${playback.total_samples.toLocaleString()} samples` : "Load a SigMF metadata file above."}</p></article>}
       {view === "Signals" && <article><h3>Signals</h3>{detections.length ? <dl>{detections.map(event => <React.Fragment key={event.id}><dt>{event.id} · {(event.start_frequency_hz / 1e6).toFixed(6)} MHz</dt><dd>{event.end_time_unix_ns == null ? "active" : "complete"} · {event.snr_db.toFixed(1)} dB SNR · {event.peak_dbfs.toFixed(1)} dBFS</dd></React.Fragment>)}</dl> : <p>No threshold events yet.</p>}</article>}
       {view === "Analysis" && <article><h3>Analysis</h3>{analysis ? <><button onClick={() => void addPeakMarker()}>Mark current peak</button><dl>{Object.entries(analysis).map(([key, value]) => <React.Fragment key={key}><dt>{key.replaceAll("_", " ")}</dt><dd>{value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</dd></React.Fragment>)}</dl><p>{markers.length} marker{markers.length === 1 ? "" : "s"} active</p></> : <p>Waiting for a spectrum frame.</p>}</article>}
-      {view === "Workspaces" && <article><h3>Workspaces</h3><button onClick={() => void saveWorkspace()}>Save current Live workspace</button><p>Workspace persistence is backed by the versioned SQLite store.</p></article>}
+      {view === "Workspaces" && <article><h3>Workspaces</h3><label>Name <input aria-label="Workspace name" value={workspaceName} maxLength={128} onChange={event => setWorkspaceName(event.target.value)} /></label><button onClick={() => void saveWorkspace()}>Save current workspace</button><p>Restoring applies capture settings and recreates saved VFO configurations with fresh runtime IDs.</p>{workspaces.length ? <dl>{workspaces.map(workspace => <React.Fragment key={workspace.id}><dt>{workspace.name}</dt><dd><button onClick={() => void loadWorkspace(workspace)}>Load</button><button onClick={() => void deleteWorkspace(workspace.id)}>Delete</button></dd></React.Fragment>)}</dl> : <p>No saved workspaces.</p>}</article>}
       {view === "Diagnostics" && <article><h3>Diagnostics</h3><dl>{Object.entries(status?.diagnostics ?? {}).map(([name, value]) => <React.Fragment key={name}><dt>{name.replaceAll("_", " ")}</dt><dd>{String(value)}</dd></React.Fragment>)}</dl></article>}
       {view === "Settings" && <article><h3>Settings</h3><p>Server: {API} · source: {status?.source ?? "offline"}</p></article>}
     </section>}

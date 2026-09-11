@@ -26,8 +26,8 @@ Initial uncalibrated spectrum measurements and `/api/v1/analysis` are implemente
 rfscopeR now includes low-rate status/device/VFO/session/recording/detection/query helpers and base-R plotting functions.
 The R package can read exported Parquet observations through the optional DuckDB CLI.
 Versioned SQLite metadata migrations, session/recording indexes, Arrow-compatible Parquet observation export, and an optional CLI-backed DuckDB query boundary are implemented.
-Structured signal markers are available through the API; automatic event duration tracking remains outstanding.
-The web shell now provides functional Live, Receivers, Recordings, Playback, Analysis, Diagnostics, Settings, Signals, and Workspaces views; persistence-backed workflows remain incremental.
+Structured signal markers and bounded SNR-threshold event lifecycles are available through the API; events are currently live-memory diagnostics rather than durable records.
+The web shell now provides functional Live, Receivers, Recordings, Playback, Analysis, Diagnostics, Settings, Signals, and Workspaces views. Saved workspaces restore capture settings and VFO configurations; VFO runtime IDs are intentionally recreated on restore.
 
 1. VFO translation/filtering, AM/NFM, 48 kHz browser audio, multiple-VFO model.
 2. Atomic SigMF recording/indexing and file playback through `IqSource`.
