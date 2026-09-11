@@ -14,3 +14,5 @@ rfscope_read_parquet("observations.parquet")
 `rfscope_bookmarks()` and `rfscope_annotations()` expose the transactional metadata stored by the workstation.
 
 `rfscope_detections()` returns bounded, uncalibrated spectrum events with start/end times when their SNR threshold lifecycle completes.
+
+`R CMD check --no-manual packages/rfscopeR` installs and loads the package successfully. The current source layout has documentation warnings for exported functions; those do not affect the low-rate client API.
