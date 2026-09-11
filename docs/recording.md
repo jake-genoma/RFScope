@@ -17,11 +17,14 @@ gets silently overwritten. `validate_sigmf` checks datatype, nonzero frequency a
 rate, capture presence, and even data length.
 
 The writer reports elapsed time, bytes/samples written, current queue depth,
-projected bytes/s (2 × sample rate), available disk space, dropped blocks/bytes
-and write errors. Disk space is sampled only while serving status, never on the
-callback or writer path. A recording stop returns an explicit error if any blocks
-dropped or writes failed; it does not claim complete data. Events/settings history
-are not yet appended after the initial metadata capture and remain a follow-up.
+projected bytes/s (2 × sample rate), available disk space, dropped blocks/bytes,
+data write errors, and metadata write errors. Disk space is sampled only while
+serving status, never on the callback or writer path. A recording stop returns an
+explicit error if any blocks or metadata writes failed; it does not claim complete
+data. Successful device-state changes append a `device_settings_changed` SigMF
+annotation with the applied state and requested control patch. Frequency or
+sample-rate changes also append a capture boundary at the current written sample.
+This low-rate metadata work runs on the control path, never in the callback.
 
 ## API and UI
 
@@ -46,4 +49,4 @@ finalization. The live HackRF Pro check on 2026-09-10 ran at 8 MS/s for 1.207 s:
 write errors. Metadata matched `ci8_le`, 8 MS/s and the accepted center frequency.
 The final test wrote under `/tmp/rfscope-capture-test`; no repository data was
 created. Long-duration disk throughput, disk-full behavior, unplug during a
-recording and capture event histories remain untested.
+recording, and hardware control-change metadata remain untested.

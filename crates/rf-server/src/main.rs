@@ -700,6 +700,8 @@ async fn patch_state(
     Json(p): Json<DeviceStatePatch>,
 ) -> Result<Json<Status>, ApiError> {
     let _guard = e.mutations.lock().await;
+    let requested_patch = serde_json::to_value(&p)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     let selected = device_call(&e, |d| d.snapshot()).await?;
     if let Some(size) = p.fft_size {
         if !(1024..=65536).contains(&size) || !size.is_power_of_two() {
@@ -786,7 +788,15 @@ async fn patch_state(
             *e.engine.fft_size.write().await = size;
         }
     }
-    Ok(Json(snapshot(&e).await?))
+    let status = snapshot(&e).await?;
+    if let Err(error) = e
+        .engine
+        .recording
+        .record_device_state(&status.state, requested_patch)
+    {
+        tracing::error!(%error, "failed to record SigMF device-setting event");
+    }
+    Ok(Json(status))
 }
 async fn ws(upgrade: WebSocketUpgrade, State(e): State<Arc<AppState>>) -> impl IntoResponse {
     upgrade.on_upgrade(move |socket| stream(socket, e.engine.clone()))

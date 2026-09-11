@@ -113,7 +113,7 @@ pub struct DeviceState {
     pub running: bool,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceStatePatch {
     pub center_frequency_hz: Option<u64>,

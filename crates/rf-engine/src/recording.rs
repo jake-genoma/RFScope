@@ -1,5 +1,6 @@
 //! Integrity-prioritized bounded SigMF writer for raw signed interleaved IQ.
 use rf_device::stream::{RawIqSink, BLOCK_BYTES};
+use rf_types::DeviceState;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
@@ -73,6 +74,7 @@ pub struct RecordingSummary {
     pub last_error: Option<String>,
     pub projected_bytes_per_second: u64,
     pub available_disk_bytes: Option<u64>,
+    pub metadata_write_errors: u64,
 }
 
 struct Block {
@@ -85,6 +87,8 @@ struct Shared {
     dropped_blocks: AtomicU64,
     dropped_bytes: AtomicU64,
     write_errors: AtomicU64,
+    metadata_write_errors: AtomicU64,
+    samples_written: AtomicU64,
     last_error: Mutex<Option<String>>,
     active: AtomicBool,
 }
@@ -157,6 +161,8 @@ impl RawIqSink for RecordingSink {
 pub struct Recording {
     sink: Arc<RecordingSink>,
     summary: Arc<Mutex<RecordingSummary>>,
+    metadata: Mutex<SigmfMeta>,
+    meta_path: PathBuf,
     join: Option<std::thread::JoinHandle<()>>,
 }
 impl Recording {
@@ -230,6 +236,8 @@ impl Recording {
             dropped_blocks: AtomicU64::new(0),
             dropped_bytes: AtomicU64::new(0),
             write_errors: AtomicU64::new(0),
+            metadata_write_errors: AtomicU64::new(0),
+            samples_written: AtomicU64::new(0),
             last_error: Mutex::new(None),
             active: AtomicBool::new(true),
         });
@@ -253,6 +261,7 @@ impl Recording {
             last_error: None,
             projected_bytes_per_second: u64::from(sample_rate_hz) * 2,
             available_disk_bytes: fs2::available_space(&directory).ok(),
+            metadata_write_errors: 0,
         }));
         let writer_summary = summary.clone();
         let join = std::thread::Builder::new()
@@ -265,6 +274,8 @@ impl Recording {
                 shared,
             }),
             summary,
+            metadata: Mutex::new(meta),
+            meta_path,
             join: Some(join),
         })
     }
@@ -294,11 +305,66 @@ impl Recording {
                     last_error: Some("summary lock poisoned".into()),
                     projected_bytes_per_second: 0,
                     available_disk_bytes: None,
+                    metadata_write_errors: 1,
                 });
         if !summary.directory.is_empty() {
             summary.available_disk_bytes = fs2::available_space(&summary.directory).ok();
         }
+        summary.metadata_write_errors = self
+            .sink
+            .shared
+            .metadata_write_errors
+            .load(Ordering::Relaxed);
         summary
+    }
+    /// Updates SigMF metadata after a control-plane change, never from the IQ callback.
+    pub fn record_device_state(
+        &self,
+        state: &DeviceState,
+        requested_patch: serde_json::Value,
+    ) -> io::Result<()> {
+        let sample_start = self.sink.shared.samples_written.load(Ordering::Acquire);
+        let mut metadata = self
+            .metadata
+            .lock()
+            .map_err(|_| io::Error::other("recording metadata lock poisoned"))?;
+        let changed_capture = metadata.captures.last().is_none_or(|capture| {
+            capture.frequency != state.center_frequency_hz
+                || capture.sample_rate != state.sample_rate_hz
+        });
+        if changed_capture {
+            metadata.captures.push(SigmfCapture {
+                core_sample_start: sample_start,
+                frequency: state.center_frequency_hz,
+                sample_rate: state.sample_rate_hz,
+            });
+        }
+        metadata.annotations.push(serde_json::json!({
+            "core:sample_start": sample_start,
+            "rfscope:event": "device_settings_changed",
+            "rfscope:device_state": state,
+            "rfscope:requested_patch": requested_patch,
+        }));
+        let temporary = self.meta_path.with_extension("sigmf-meta.tmp");
+        let encoded = serde_json::to_vec_pretty(&*metadata).map_err(io::Error::other)?;
+        let result = (|| -> io::Result<()> {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&temporary)?;
+            file.write_all(&encoded)?;
+            file.write_all(b"\n")?;
+            file.sync_all()?;
+            fs::rename(&temporary, &self.meta_path)
+        })();
+        if result.is_err() {
+            self.sink
+                .shared
+                .metadata_write_errors
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        result
     }
     pub fn finish(mut self) -> io::Result<RecordingSummary> {
         self.sink.shared.active.store(false, Ordering::Release);
@@ -312,10 +378,13 @@ impl Recording {
                 .map_err(|_| io::Error::other("recording writer panicked"))?;
         }
         let summary = self.summary();
-        if summary.dropped_blocks > 0 || summary.write_errors > 0 {
+        if summary.dropped_blocks > 0
+            || summary.write_errors > 0
+            || summary.metadata_write_errors > 0
+        {
             return Err(io::Error::other(format!(
-                "recording incomplete: {} dropped blocks, {} write errors",
-                summary.dropped_blocks, summary.write_errors
+                "recording incomplete: {} dropped blocks, {} data write errors, {} metadata write errors",
+                summary.dropped_blocks, summary.write_errors, summary.metadata_write_errors
             )));
         }
         Ok(summary)
@@ -348,11 +417,13 @@ fn writer_loop(
         if let Ok(mut value) = summary.lock() {
             value.bytes_written = bytes;
             value.samples_written = bytes / 2;
+            shared.samples_written.store(bytes / 2, Ordering::Release);
             value.elapsed_ms = started.elapsed().as_millis() as u64;
             value.queued_blocks = shared.queued.load(Ordering::Relaxed) as usize;
             value.dropped_blocks = shared.dropped_blocks.load(Ordering::Relaxed);
             value.dropped_bytes = shared.dropped_bytes.load(Ordering::Relaxed);
             value.write_errors = shared.write_errors.load(Ordering::Relaxed);
+            value.metadata_write_errors = shared.metadata_write_errors.load(Ordering::Relaxed);
             value.last_error = shared.last_error.lock().ok().and_then(|v| v.clone());
         }
     }
@@ -363,6 +434,7 @@ fn writer_loop(
         value.dropped_blocks = shared.dropped_blocks.load(Ordering::Relaxed);
         value.dropped_bytes = shared.dropped_bytes.load(Ordering::Relaxed);
         value.write_errors = shared.write_errors.load(Ordering::Relaxed);
+        value.metadata_write_errors = shared.metadata_write_errors.load(Ordering::Relaxed);
     }
 }
 
@@ -440,6 +512,20 @@ impl RecordingManager {
             .ok()
             .and_then(|v| v.as_ref().map(|r| r.sink() as Arc<dyn RawIqSink>))
     }
+    pub fn record_device_state(
+        &self,
+        state: &DeviceState,
+        requested_patch: serde_json::Value,
+    ) -> io::Result<()> {
+        let current = self
+            .current
+            .lock()
+            .map_err(|_| io::Error::other("recording manager lock poisoned"))?;
+        if let Some(recording) = current.as_ref() {
+            recording.record_device_state(state, requested_patch)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -484,6 +570,16 @@ mod tests {
         for _ in 0..4 {
             sink.push(&block);
         }
+        recording
+            .record_device_state(
+                &DeviceState {
+                    center_frequency_hz: 100_100_000,
+                    sample_rate_hz: 96_000,
+                    running: true,
+                },
+                serde_json::json!({ "center_frequency_hz": 100_100_000 }),
+            )
+            .unwrap();
         let summary = recording.finish().unwrap();
         assert_eq!(summary.bytes_written, 8192);
         assert_eq!(summary.samples_written, 4096);
@@ -495,6 +591,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(meta.captures[0].frequency, 100_000_000);
+        assert_eq!(meta.captures[1].frequency, 100_100_000);
+        assert_eq!(meta.captures[1].sample_rate, 96_000);
+        assert_eq!(
+            meta.annotations[0]["rfscope:event"],
+            "device_settings_changed"
+        );
         let second = Recording::start(&root, 100_000_000, 48_000, "mock").unwrap();
         assert_ne!(second.summary().id, summary.id);
         drop(second);
