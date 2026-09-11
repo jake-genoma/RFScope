@@ -80,6 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/device/state", get(status).patch(patch_state))
         .route("/api/v1/metrics", get(metrics))
         .route("/api/v1/analysis", get(analysis))
+        .route("/api/v1/analysis/offsets", get(analysis_offsets))
         .route("/api/v1/analysis/observations", get(analysis_observations))
         .route("/api/v1/analysis/export", post(analysis_export))
         .route("/api/v1/analysis/query", post(analysis_query))
@@ -187,6 +188,55 @@ async fn analysis(
     State(e): State<Arc<AppState>>,
 ) -> Json<Option<rf_dsp::analysis::SpectrumMeasurements>> {
     Json(e.engine.latest_measurements.read().await.clone())
+}
+#[derive(serde::Serialize)]
+struct FrequencyOffset {
+    id: String,
+    label: String,
+    offset_hz: f64,
+}
+#[derive(serde::Serialize)]
+struct AnalysisOffsets {
+    peak_frequency_hz: f64,
+    markers: Vec<FrequencyOffset>,
+    vfos: Vec<FrequencyOffset>,
+}
+async fn analysis_offsets(
+    State(e): State<Arc<AppState>>,
+) -> Result<Json<Option<AnalysisOffsets>>, ApiError> {
+    let Some(measurement) = e.engine.latest_measurements.read().await.clone() else {
+        return Ok(Json(None));
+    };
+    let peak_frequency_hz = measurement.peak_frequency_hz;
+    let markers = e
+        .engine
+        .markers
+        .read()
+        .await
+        .iter()
+        .map(|marker| FrequencyOffset {
+            id: marker.id.clone(),
+            label: marker.label.clone(),
+            offset_hz: peak_frequency_hz - marker.frequency_hz as f64,
+        })
+        .collect();
+    let vfos = e
+        .engine
+        .vfos
+        .list()
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?
+        .into_iter()
+        .map(|vfo| FrequencyOffset {
+            id: vfo.id,
+            label: vfo.configuration.name,
+            offset_hz: peak_frequency_hz - vfo.configuration.frequency_hz as f64,
+        })
+        .collect();
+    Ok(Json(Some(AnalysisOffsets {
+        peak_frequency_hz,
+        markers,
+        vfos,
+    })))
 }
 async fn analysis_observations(
     State(e): State<Arc<AppState>>,
