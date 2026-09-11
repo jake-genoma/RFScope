@@ -60,6 +60,11 @@ pub struct StoredSignalEvent {
     pub peak_dbfs: f32,
     pub snr_db: f32,
 }
+#[derive(Clone, Debug, Serialize, serde::Deserialize, PartialEq)]
+pub struct StoredPreference {
+    pub key: String,
+    pub value_json: String,
+}
 
 pub struct Storage {
     connection: Mutex<Connection>,
@@ -281,6 +286,27 @@ impl Storage {
         let connection = self.connection.lock().map_err(|_| StorageError::Poisoned)?;
         Ok(connection.execute("DELETE FROM annotations WHERE id = ?1", params![id])? != 0)
     }
+    pub fn preferences(&self) -> Result<Vec<StoredPreference>, StorageError> {
+        let connection = self.connection.lock().map_err(|_| StorageError::Poisoned)?;
+        let mut statement =
+            connection.prepare("SELECT key,value_json FROM preferences ORDER BY key")?;
+        let rows = statement.query_map([], |row| {
+            Ok(StoredPreference {
+                key: row.get(0)?,
+                value_json: row.get(1)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StorageError::from)
+    }
+    pub fn set_preference(&self, preference: &StoredPreference) -> Result<(), StorageError> {
+        let connection = self.connection.lock().map_err(|_| StorageError::Poisoned)?;
+        connection.execute(
+            "INSERT OR REPLACE INTO preferences(key,value_json) VALUES (?1,?2)",
+            params![preference.key, preference.value_json],
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -348,5 +374,12 @@ mod tests {
             })
             .unwrap();
         assert_eq!(storage.signal_events(10).unwrap()[0].id, "event-1");
+        storage
+            .set_preference(&StoredPreference {
+                key: "station_label".into(),
+                value_json: "\"Lab\"".into(),
+            })
+            .unwrap();
+        assert_eq!(storage.preferences().unwrap()[0].key, "station_label");
     }
 }

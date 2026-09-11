@@ -106,6 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/api/v1/annotations/{id}",
             axum::routing::delete(delete_annotation),
         )
+        .route("/api/v1/preferences", get(preferences).post(set_preference))
         .route("/api/v1/markers", get(markers).post(add_marker))
         .route("/api/v1/markers/{id}", axum::routing::delete(remove_marker))
         .route("/api/v1/stream/spectrum", get(ws))
@@ -526,6 +527,40 @@ async fn delete_annotation(
     } else {
         Err((StatusCode::NOT_FOUND, "annotation not found".into()))
     }
+}
+async fn preferences(
+    State(e): State<Arc<AppState>>,
+) -> Result<Json<Vec<rf_engine::storage::StoredPreference>>, ApiError> {
+    let Some(storage) = &e.engine.storage else {
+        return Ok(Json(Vec::new()));
+    };
+    storage
+        .preferences()
+        .map(Json)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+}
+async fn set_preference(
+    State(e): State<Arc<AppState>>,
+    Json(preference): Json<rf_engine::storage::StoredPreference>,
+) -> Result<Json<rf_engine::storage::StoredPreference>, ApiError> {
+    if preference.key.trim().is_empty()
+        || serde_json::from_str::<serde_json::Value>(&preference.value_json).is_err()
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "preference key or JSON value is invalid".into(),
+        ));
+    }
+    let Some(storage) = &e.engine.storage else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "persistent storage is unavailable".into(),
+        ));
+    };
+    storage
+        .set_preference(&preference)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(preference))
 }
 async fn markers(State(e): State<Arc<AppState>>) -> Json<Vec<rf_types::SignalMarker>> {
     Json(e.engine.markers.read().await.clone())
