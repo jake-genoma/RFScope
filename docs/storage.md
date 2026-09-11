@@ -5,3 +5,5 @@ The server opens `RFSCOPE_DB` (default `rfscope.sqlite3`) and applies an idempot
 Retained analytical observations can be exported to Arrow-compatible Parquet with the versioned schema in `rf-engine::observations`. DuckDB can query these files directly; a dedicated DuckDB service/query API remains planned. SQLite is deliberately limited to transactional metadata and indexes.
 
 The engine retains at most 4096 latest measurements in a bounded ring. `GET /api/v1/analysis/observations` reads that ring and `POST /api/v1/analysis/export` writes it to `RFSCOPE_OBSERVATIONS` (default `observations.parquet`).
+
+When a DuckDB CLI is installed, `POST /api/v1/analysis/query` with `{ "path": "observations.parquet", "limit": 1000 }` queries the Parquet file through DuckDB's `read_parquet` table function. Set `RFSCOPE_DUCKDB_BIN` to select another executable. The endpoint is low-rate and isolated from the DSP thread; missing DuckDB is returned as a service-unavailable diagnostic.

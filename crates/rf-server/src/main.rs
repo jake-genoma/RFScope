@@ -81,6 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/analysis", get(analysis))
         .route("/api/v1/analysis/observations", get(analysis_observations))
         .route("/api/v1/analysis/export", post(analysis_export))
+        .route("/api/v1/analysis/query", post(analysis_query))
         .route("/api/v1/sessions", get(sessions))
         .route("/api/v1/recordings", get(recordings))
         .route("/api/v1/storage/recordings", get(storage_recordings))
@@ -207,6 +208,21 @@ async fn analysis_export(
         path,
         count: rows.len(),
     }))
+}
+#[derive(serde::Deserialize)]
+struct AnalysisQueryRequest {
+    path: String,
+    limit: Option<usize>,
+}
+async fn analysis_query(
+    Json(request): Json<AnalysisQueryRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let sql = rf_engine::duckdb::parquet_query(request.path, request.limit.unwrap_or(1000));
+    tokio::task::spawn_blocking(move || rf_engine::duckdb::query(&sql))
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .map(Json)
+        .map_err(|error| (StatusCode::SERVICE_UNAVAILABLE, error.to_string()))
 }
 async fn sessions(
     State(e): State<Arc<AppState>>,

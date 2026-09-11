@@ -1,5 +1,6 @@
 //! Shared live/file-ready IQ pipeline and spectrum wire encoder.
 pub mod audio;
+pub mod duckdb;
 pub mod observations;
 pub mod playback;
 pub mod recording;
