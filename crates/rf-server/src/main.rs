@@ -983,6 +983,47 @@ mod tests {
         e.devices.shutdown().unwrap();
     }
     #[tokio::test]
+    async fn analysis_offsets_use_current_peak_marker_and_vfo() {
+        let e = state();
+        *e.engine.latest_measurements.write().await =
+            Some(rf_dsp::analysis::SpectrumMeasurements {
+                peak_frequency_hz: 100_001_000.0,
+                peak_dbfs: -10.0,
+                noise_floor_dbfs: -80.0,
+                snr_db: 70.0,
+                bandwidth_3db_hz: 1.0,
+                bandwidth_6db_hz: 2.0,
+                occupied_bandwidth_99_hz: 3.0,
+                amplitude_mean_dbfs: -60.0,
+                amplitude_min_dbfs: -80.0,
+                amplitude_max_dbfs: -10.0,
+            });
+        e.engine.markers.write().await.push(rf_types::SignalMarker {
+            id: "marker".into(),
+            frequency_hz: 100_000_000,
+            label: "reference".into(),
+            color: "#fff".into(),
+        });
+        let config = rf_types::VfoConfiguration {
+            name: "receiver".into(),
+            frequency_hz: 100_002_000,
+            mode: rf_types::ReceiverMode::Am,
+            bandwidth_hz: 10_000,
+            squelch_dbfs: None,
+            agc: true,
+            volume: 1.0,
+            mute: false,
+            solo: false,
+            audio_highpass_hz: 80,
+            audio_lowpass_hz: 5_000,
+        };
+        let _ = add_vfo(State(e.clone()), Json(config)).await.unwrap();
+        let offsets = analysis_offsets(State(e.clone())).await.unwrap().0.unwrap();
+        assert_eq!(offsets.markers[0].offset_hz, 1_000.0);
+        assert_eq!(offsets.vfos[0].offset_hz, -1_000.0);
+        e.devices.shutdown().unwrap();
+    }
+    #[tokio::test]
     async fn vfo_edits_preserve_capture_and_invalid_changes_are_atomic() {
         let e = state();
         let config = rf_types::VfoConfiguration {
