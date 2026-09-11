@@ -10,3 +10,5 @@ rfscope_read_parquet("observations.parquet")
 ```
 
 `rfscope_read_parquet()` uses DuckDB's CLI when installed. The dependency is optional and is never used for real-time IQ processing.
+
+`rfscope_bookmarks()` and `rfscope_annotations()` expose the transactional metadata stored by the workstation.

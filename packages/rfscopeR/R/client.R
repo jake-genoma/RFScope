@@ -13,6 +13,8 @@ rfscope_devices <- function(connection = rfscope_connect()) rfscope_get(connecti
 rfscope_vfos <- function(connection = rfscope_connect()) rfscope_get(connection, "/api/v1/vfos")
 rfscope_sessions <- function(connection = rfscope_connect()) rfscope_get(connection, "/api/v1/sessions")
 rfscope_workspaces <- function(connection = rfscope_connect()) rfscope_get(connection, "/api/v1/workspaces")
+rfscope_bookmarks <- function(connection = rfscope_connect()) rfscope_get(connection, "/api/v1/bookmarks")
+rfscope_annotations <- function(connection = rfscope_connect()) rfscope_get(connection, "/api/v1/annotations")
 rfscope_recordings <- function(connection = rfscope_connect()) rfscope_get(connection, "/api/v1/recordings")
 rfscope_detections <- function(connection = rfscope_connect()) rfscope_get(connection, "/api/v1/detections")
 rfscope_query <- function(connection = rfscope_connect(), path = "/api/v1/analysis") rfscope_get(connection, path)

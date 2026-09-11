@@ -34,6 +34,21 @@ pub struct StoredWorkspace {
     pub name: String,
     pub payload_json: String,
 }
+#[derive(Clone, Debug, Serialize, serde::Deserialize, PartialEq)]
+pub struct StoredBookmark {
+    pub id: i64,
+    pub recording_id: Option<String>,
+    pub sample_index: u64,
+    pub label: String,
+}
+#[derive(Clone, Debug, Serialize, serde::Deserialize, PartialEq)]
+pub struct StoredAnnotation {
+    pub id: i64,
+    pub recording_id: Option<String>,
+    pub start_sample: u64,
+    pub end_sample: u64,
+    pub payload_json: String,
+}
 
 pub struct Storage {
     connection: Mutex<Connection>,
@@ -155,6 +170,70 @@ impl Storage {
         let connection = self.connection.lock().map_err(|_| StorageError::Poisoned)?;
         Ok(connection.execute("DELETE FROM workspaces WHERE id = ?1", params![id])? != 0)
     }
+    pub fn bookmarks(&self) -> Result<Vec<StoredBookmark>, StorageError> {
+        let connection = self.connection.lock().map_err(|_| StorageError::Poisoned)?;
+        let mut statement = connection.prepare(
+            "SELECT id,recording_id,sample_index,label FROM bookmarks ORDER BY sample_index",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(StoredBookmark {
+                id: row.get(0)?,
+                recording_id: row.get(1)?,
+                sample_index: row.get(2)?,
+                label: row.get(3)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StorageError::from)
+    }
+    pub fn create_bookmark(
+        &self,
+        bookmark: &StoredBookmark,
+    ) -> Result<StoredBookmark, StorageError> {
+        let connection = self.connection.lock().map_err(|_| StorageError::Poisoned)?;
+        connection.execute(
+            "INSERT INTO bookmarks(recording_id,sample_index,label) VALUES (?1,?2,?3)",
+            params![bookmark.recording_id, bookmark.sample_index, bookmark.label],
+        )?;
+        Ok(StoredBookmark {
+            id: connection.last_insert_rowid(),
+            ..bookmark.clone()
+        })
+    }
+    pub fn remove_bookmark(&self, id: i64) -> Result<bool, StorageError> {
+        let connection = self.connection.lock().map_err(|_| StorageError::Poisoned)?;
+        Ok(connection.execute("DELETE FROM bookmarks WHERE id = ?1", params![id])? != 0)
+    }
+    pub fn annotations(&self) -> Result<Vec<StoredAnnotation>, StorageError> {
+        let connection = self.connection.lock().map_err(|_| StorageError::Poisoned)?;
+        let mut statement = connection.prepare("SELECT id,recording_id,start_sample,end_sample,payload_json FROM annotations ORDER BY start_sample")?;
+        let rows = statement.query_map([], |row| {
+            Ok(StoredAnnotation {
+                id: row.get(0)?,
+                recording_id: row.get(1)?,
+                start_sample: row.get(2)?,
+                end_sample: row.get(3)?,
+                payload_json: row.get(4)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StorageError::from)
+    }
+    pub fn create_annotation(
+        &self,
+        annotation: &StoredAnnotation,
+    ) -> Result<StoredAnnotation, StorageError> {
+        let connection = self.connection.lock().map_err(|_| StorageError::Poisoned)?;
+        connection.execute("INSERT INTO annotations(recording_id,start_sample,end_sample,payload_json) VALUES (?1,?2,?3,?4)", params![annotation.recording_id, annotation.start_sample, annotation.end_sample, annotation.payload_json])?;
+        Ok(StoredAnnotation {
+            id: connection.last_insert_rowid(),
+            ..annotation.clone()
+        })
+    }
+    pub fn remove_annotation(&self, id: i64) -> Result<bool, StorageError> {
+        let connection = self.connection.lock().map_err(|_| StorageError::Poisoned)?;
+        Ok(connection.execute("DELETE FROM annotations WHERE id = ?1", params![id])? != 0)
+    }
 }
 
 #[cfg(test)]
@@ -189,5 +268,26 @@ mod tests {
             .unwrap();
         assert_eq!(storage.workspaces().unwrap()[0].id, "w1");
         assert!(storage.remove_workspace("w1").unwrap());
+        let bookmark = storage
+            .create_bookmark(&StoredBookmark {
+                id: 0,
+                recording_id: Some("r1".into()),
+                sample_index: 42,
+                label: "interesting".into(),
+            })
+            .unwrap();
+        assert_eq!(storage.bookmarks().unwrap()[0], bookmark);
+        assert!(storage.remove_bookmark(bookmark.id).unwrap());
+        let annotation = storage
+            .create_annotation(&StoredAnnotation {
+                id: 0,
+                recording_id: Some("r1".into()),
+                start_sample: 10,
+                end_sample: 20,
+                payload_json: "{\"label\":\"burst\"}".into(),
+            })
+            .unwrap();
+        assert_eq!(storage.annotations().unwrap()[0], annotation);
+        assert!(storage.remove_annotation(annotation.id).unwrap());
     }
 }

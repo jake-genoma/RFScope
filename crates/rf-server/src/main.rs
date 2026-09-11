@@ -91,6 +91,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/api/v1/workspaces/{id}",
             axum::routing::delete(delete_workspace),
         )
+        .route("/api/v1/bookmarks", get(bookmarks).post(create_bookmark))
+        .route(
+            "/api/v1/bookmarks/{id}",
+            axum::routing::delete(delete_bookmark),
+        )
+        .route(
+            "/api/v1/annotations",
+            get(annotations).post(create_annotation),
+        )
+        .route(
+            "/api/v1/annotations/{id}",
+            axum::routing::delete(delete_annotation),
+        )
         .route("/api/v1/markers", get(markers).post(add_marker))
         .route("/api/v1/markers/{id}", axum::routing::delete(remove_marker))
         .route("/api/v1/stream/spectrum", get(ws))
@@ -308,6 +321,131 @@ async fn delete_workspace(
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err((StatusCode::NOT_FOUND, "workspace not found".into()))
+    }
+}
+#[derive(serde::Deserialize)]
+struct BookmarkRequest {
+    recording_id: Option<String>,
+    sample_index: u64,
+    label: String,
+}
+async fn bookmarks(
+    State(e): State<Arc<AppState>>,
+) -> Result<Json<Vec<rf_engine::storage::StoredBookmark>>, ApiError> {
+    let Some(storage) = &e.engine.storage else {
+        return Ok(Json(Vec::new()));
+    };
+    storage
+        .bookmarks()
+        .map(Json)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+}
+async fn create_bookmark(
+    State(e): State<Arc<AppState>>,
+    Json(request): Json<BookmarkRequest>,
+) -> Result<Json<rf_engine::storage::StoredBookmark>, ApiError> {
+    if request.label.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "bookmark label is required".into()));
+    }
+    let Some(storage) = &e.engine.storage else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "persistent storage is unavailable".into(),
+        ));
+    };
+    storage
+        .create_bookmark(&rf_engine::storage::StoredBookmark {
+            id: 0,
+            recording_id: request.recording_id,
+            sample_index: request.sample_index,
+            label: request.label,
+        })
+        .map(Json)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+}
+async fn delete_bookmark(
+    State(e): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let Some(storage) = &e.engine.storage else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "persistent storage is unavailable".into(),
+        ));
+    };
+    if storage
+        .remove_bookmark(id)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+    {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err((StatusCode::NOT_FOUND, "bookmark not found".into()))
+    }
+}
+#[derive(serde::Deserialize)]
+struct AnnotationRequest {
+    recording_id: Option<String>,
+    start_sample: u64,
+    end_sample: u64,
+    payload_json: String,
+}
+async fn annotations(
+    State(e): State<Arc<AppState>>,
+) -> Result<Json<Vec<rf_engine::storage::StoredAnnotation>>, ApiError> {
+    let Some(storage) = &e.engine.storage else {
+        return Ok(Json(Vec::new()));
+    };
+    storage
+        .annotations()
+        .map(Json)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+}
+async fn create_annotation(
+    State(e): State<Arc<AppState>>,
+    Json(request): Json<AnnotationRequest>,
+) -> Result<Json<rf_engine::storage::StoredAnnotation>, ApiError> {
+    if request.end_sample < request.start_sample
+        || serde_json::from_str::<serde_json::Value>(&request.payload_json).is_err()
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "annotation range or payload is invalid".into(),
+        ));
+    }
+    let Some(storage) = &e.engine.storage else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "persistent storage is unavailable".into(),
+        ));
+    };
+    storage
+        .create_annotation(&rf_engine::storage::StoredAnnotation {
+            id: 0,
+            recording_id: request.recording_id,
+            start_sample: request.start_sample,
+            end_sample: request.end_sample,
+            payload_json: request.payload_json,
+        })
+        .map(Json)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+}
+async fn delete_annotation(
+    State(e): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let Some(storage) = &e.engine.storage else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "persistent storage is unavailable".into(),
+        ));
+    };
+    if storage
+        .remove_annotation(id)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+    {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err((StatusCode::NOT_FOUND, "annotation not found".into()))
     }
 }
 async fn markers(State(e): State<Arc<AppState>>) -> Json<Vec<rf_types::SignalMarker>> {

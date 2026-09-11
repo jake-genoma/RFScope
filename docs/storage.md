@@ -8,4 +8,6 @@ The engine retains at most 4096 latest measurements in a bounded ring. `GET /api
 
 Workspaces are stored transactionally with `GET/POST /api/v1/workspaces` and `DELETE /api/v1/workspaces/{id}`.
 
+Bookmarks and annotations are stored transactionally with corresponding `GET/POST/DELETE` endpoints at `/api/v1/bookmarks` and `/api/v1/annotations`. Annotation payloads are validated JSON and are linked to a recording when one is supplied.
+
 When a DuckDB CLI is installed, `POST /api/v1/analysis/query` with `{ "path": "observations.parquet", "limit": 1000 }` queries the Parquet file through DuckDB's `read_parquet` table function. Set `RFSCOPE_DUCKDB_BIN` to select another executable. The endpoint is low-rate and isolated from the DSP thread; missing DuckDB is returned as a service-unavailable diagnostic.
