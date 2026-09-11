@@ -269,8 +269,14 @@ async fn recordings(
 ) -> Json<Vec<rf_engine::recording::RecordingSummary>> {
     Json(e.engine.recording.status().into_iter().collect())
 }
-async fn detections(State(_e): State<Arc<AppState>>) -> Json<Vec<serde_json::Value>> {
-    Json(Vec::new())
+async fn detections(State(e): State<Arc<AppState>>) -> Json<Vec<rf_types::SignalEvent>> {
+    Json(
+        e.engine
+            .events
+            .lock()
+            .map(|events| events.events())
+            .unwrap_or_default(),
+    )
 }
 async fn workspaces(
     State(e): State<Arc<AppState>>,

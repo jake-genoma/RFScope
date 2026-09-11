@@ -1,6 +1,7 @@
 //! Shared live/file-ready IQ pipeline and spectrum wire encoder.
 pub mod audio;
 pub mod duckdb;
+pub mod events;
 pub mod observations;
 pub mod playback;
 pub mod recording;
@@ -38,6 +39,7 @@ pub struct Engine {
     pub latest_measurements: Arc<RwLock<Option<rf_dsp::analysis::SpectrumMeasurements>>>,
     pub observations: Arc<std::sync::Mutex<VecDeque<observations::Observation>>>,
     pub markers: Arc<RwLock<Vec<rf_types::SignalMarker>>>,
+    pub events: Arc<std::sync::Mutex<events::EventTracker>>,
     received: Arc<AtomicU64>,
     frame_count: Arc<AtomicU64>,
     dropped: Arc<AtomicU64>,
@@ -65,6 +67,7 @@ impl Engine {
             latest_measurements: Arc::new(RwLock::new(None)),
             observations: Arc::new(std::sync::Mutex::new(VecDeque::with_capacity(4096))),
             markers: Arc::new(RwLock::new(Vec::new())),
+            events: Arc::new(std::sync::Mutex::new(events::EventTracker::default())),
             received: Arc::new(AtomicU64::new(0)),
             frame_count: Arc::new(AtomicU64::new(0)),
             dropped: Arc::new(AtomicU64::new(0)),
@@ -213,14 +216,15 @@ impl Engine {
                 rf_dsp::analysis::measure(&bins, state.center_frequency_hz, state.sample_rate_hz)
             {
                 *self.latest_measurements.write().await = Some(measurements.clone());
+                let timestamp_ns = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos() as u64);
                 if let Ok(mut retained) = self.observations.lock() {
                     if retained.len() >= 4096 {
                         retained.pop_front();
                     }
                     retained.push_back(observations::Observation {
-                        observed_at_unix_ns: SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .map_or(0, |d| d.as_nanos() as u64),
+                        observed_at_unix_ns: timestamp_ns,
                         center_frequency_hz: state.center_frequency_hz,
                         sample_rate_hz: state.sample_rate_hz,
                         peak_frequency_hz: measurements.peak_frequency_hz,
@@ -231,6 +235,9 @@ impl Engine {
                         bandwidth_6db_hz: measurements.bandwidth_6db_hz,
                         occupied_bandwidth_99_hz: measurements.occupied_bandwidth_99_hz,
                     });
+                }
+                if let Ok(mut events) = self.events.lock() {
+                    events.observe(timestamp_ns, &measurements);
                 }
             }
             sequence += 1;
