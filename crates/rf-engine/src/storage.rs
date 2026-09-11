@@ -28,6 +28,12 @@ pub struct StoredSession {
     pub sample_rate_hz: u32,
     pub started_at_unix_ns: u64,
 }
+#[derive(Clone, Debug, Serialize, serde::Deserialize, PartialEq)]
+pub struct StoredWorkspace {
+    pub id: String,
+    pub name: String,
+    pub payload_json: String,
+}
 
 pub struct Storage {
     connection: Mutex<Connection>,
@@ -123,6 +129,32 @@ impl Storage {
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(StorageError::from)
     }
+    pub fn workspaces(&self) -> Result<Vec<StoredWorkspace>, StorageError> {
+        let connection = self.connection.lock().map_err(|_| StorageError::Poisoned)?;
+        let mut statement =
+            connection.prepare("SELECT id,name,payload_json FROM workspaces ORDER BY name")?;
+        let rows = statement.query_map([], |row| {
+            Ok(StoredWorkspace {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                payload_json: row.get(2)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StorageError::from)
+    }
+    pub fn upsert_workspace(&self, workspace: &StoredWorkspace) -> Result<(), StorageError> {
+        let connection = self.connection.lock().map_err(|_| StorageError::Poisoned)?;
+        connection.execute(
+            "INSERT OR REPLACE INTO workspaces(id,name,payload_json) VALUES (?1,?2,?3)",
+            params![workspace.id, workspace.name, workspace.payload_json],
+        )?;
+        Ok(())
+    }
+    pub fn remove_workspace(&self, id: &str) -> Result<bool, StorageError> {
+        let connection = self.connection.lock().map_err(|_| StorageError::Poisoned)?;
+        Ok(connection.execute("DELETE FROM workspaces WHERE id = ?1", params![id])? != 0)
+    }
 }
 
 #[cfg(test)]
@@ -148,5 +180,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(storage.recordings().unwrap().len(), 1);
+        storage
+            .upsert_workspace(&StoredWorkspace {
+                id: "w1".into(),
+                name: "Live".into(),
+                payload_json: "{}".into(),
+            })
+            .unwrap();
+        assert_eq!(storage.workspaces().unwrap()[0].id, "w1");
+        assert!(storage.remove_workspace("w1").unwrap());
     }
 }

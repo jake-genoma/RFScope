@@ -12,6 +12,7 @@ rfscope_get <- function(connection, path) jsonlite::fromJSON(paste0(connection$u
 rfscope_devices <- function(connection = rfscope_connect()) rfscope_get(connection, "/api/v1/devices")
 rfscope_vfos <- function(connection = rfscope_connect()) rfscope_get(connection, "/api/v1/vfos")
 rfscope_sessions <- function(connection = rfscope_connect()) rfscope_get(connection, "/api/v1/sessions")
+rfscope_workspaces <- function(connection = rfscope_connect()) rfscope_get(connection, "/api/v1/workspaces")
 rfscope_recordings <- function(connection = rfscope_connect()) rfscope_get(connection, "/api/v1/recordings")
 rfscope_detections <- function(connection = rfscope_connect()) rfscope_get(connection, "/api/v1/detections")
 rfscope_query <- function(connection = rfscope_connect(), path = "/api/v1/analysis") rfscope_get(connection, path)

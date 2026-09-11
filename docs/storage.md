@@ -6,4 +6,6 @@ Retained analytical observations can be exported to Arrow-compatible Parquet wit
 
 The engine retains at most 4096 latest measurements in a bounded ring. `GET /api/v1/analysis/observations` reads that ring and `POST /api/v1/analysis/export` writes it to `RFSCOPE_OBSERVATIONS` (default `observations.parquet`).
 
+Workspaces are stored transactionally with `GET/POST /api/v1/workspaces` and `DELETE /api/v1/workspaces/{id}`.
+
 When a DuckDB CLI is installed, `POST /api/v1/analysis/query` with `{ "path": "observations.parquet", "limit": 1000 }` queries the Parquet file through DuckDB's `read_parquet` table function. Set `RFSCOPE_DUCKDB_BIN` to select another executable. The endpoint is low-rate and isolated from the DSP thread; missing DuckDB is returned as a service-unavailable diagnostic.

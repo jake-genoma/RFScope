@@ -86,6 +86,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/recordings", get(recordings))
         .route("/api/v1/storage/recordings", get(storage_recordings))
         .route("/api/v1/detections", get(detections))
+        .route("/api/v1/workspaces", get(workspaces).post(save_workspace))
+        .route(
+            "/api/v1/workspaces/{id}",
+            axum::routing::delete(delete_workspace),
+        )
         .route("/api/v1/markers", get(markers).post(add_marker))
         .route("/api/v1/markers/{id}", axum::routing::delete(remove_marker))
         .route("/api/v1/stream/spectrum", get(ws))
@@ -253,6 +258,57 @@ async fn recordings(
 }
 async fn detections(State(_e): State<Arc<AppState>>) -> Json<Vec<serde_json::Value>> {
     Json(Vec::new())
+}
+async fn workspaces(
+    State(e): State<Arc<AppState>>,
+) -> Result<Json<Vec<rf_engine::storage::StoredWorkspace>>, ApiError> {
+    let Some(storage) = &e.engine.storage else {
+        return Ok(Json(Vec::new()));
+    };
+    storage
+        .workspaces()
+        .map(Json)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+}
+async fn save_workspace(
+    State(e): State<Arc<AppState>>,
+    Json(workspace): Json<rf_engine::storage::StoredWorkspace>,
+) -> Result<Json<rf_engine::storage::StoredWorkspace>, ApiError> {
+    if workspace.id.trim().is_empty() || workspace.name.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "workspace id and name are required".into(),
+        ));
+    }
+    let Some(storage) = &e.engine.storage else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "persistent storage is unavailable".into(),
+        ));
+    };
+    storage
+        .upsert_workspace(&workspace)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(workspace))
+}
+async fn delete_workspace(
+    State(e): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let Some(storage) = &e.engine.storage else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "persistent storage is unavailable".into(),
+        ));
+    };
+    if storage
+        .remove_workspace(&id)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+    {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err((StatusCode::NOT_FOUND, "workspace not found".into()))
+    }
 }
 async fn markers(State(e): State<Arc<AppState>>) -> Json<Vec<rf_types::SignalMarker>> {
     Json(e.engine.markers.read().await.clone())

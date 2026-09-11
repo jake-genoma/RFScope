@@ -99,6 +99,13 @@ function App() {
       setMarkers([...markers, marker]);
     } catch (error) { setError(String(error)); }
   }
+  async function saveWorkspace() {
+    try {
+      const response = await fetch(`${API}/workspaces`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "live", name: "Live", payload_json: JSON.stringify({ center_frequency_hz: status?.state.center_frequency_hz, sample_rate_hz: status?.state.sample_rate_hz, vfos }) }) });
+      if (!response.ok) throw new Error(await response.text());
+      setError("");
+    } catch (error) { setError(String(error)); }
+  }
   const visible = !status?.device || status.device.supports_iq_streaming;
   return <main>
     <header><b>RF<span>Scope</span></b><nav>{["Live", "Receivers", "Recordings", "Playback", "Signals", "Analysis", "Workspaces", "Diagnostics", "Settings"].map(name => <button key={name} onClick={() => setView(name)} className={view === name ? "active" : ""}>{name}</button>)}</nav></header>
@@ -130,7 +137,7 @@ function App() {
       {view === "Playback" && <article><h3>Playback timeline</h3><p>{playback?.loaded ? `${playback.session_id} · ${playback.position_samples.toLocaleString()} / ${playback.total_samples.toLocaleString()} samples` : "Load a SigMF metadata file above."}</p></article>}
       {view === "Signals" && <article><h3>Signals</h3><p>Signal browser and event annotations will use persisted observations.</p></article>}
       {view === "Analysis" && <article><h3>Analysis</h3>{analysis ? <><button onClick={() => void addPeakMarker()}>Mark current peak</button><dl>{Object.entries(analysis).map(([key, value]) => <React.Fragment key={key}><dt>{key.replaceAll("_", " ")}</dt><dd>{value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</dd></React.Fragment>)}</dl><p>{markers.length} marker{markers.length === 1 ? "" : "s"} active</p></> : <p>Waiting for a spectrum frame.</p>}</article>}
-      {view === "Workspaces" && <article><h3>Workspaces</h3><p>Workspace persistence is backed by the versioned SQLite store.</p></article>}
+      {view === "Workspaces" && <article><h3>Workspaces</h3><button onClick={() => void saveWorkspace()}>Save current Live workspace</button><p>Workspace persistence is backed by the versioned SQLite store.</p></article>}
       {view === "Diagnostics" && <article><h3>Diagnostics</h3><dl>{Object.entries(status?.diagnostics ?? {}).map(([name, value]) => <React.Fragment key={name}><dt>{name.replaceAll("_", " ")}</dt><dd>{String(value)}</dd></React.Fragment>)}</dl></article>}
       {view === "Settings" && <article><h3>Settings</h3><p>Server: {API} · source: {status?.source ?? "offline"}</p></article>}
     </section>}
