@@ -23,6 +23,7 @@ type SignalEvent = { id: string; start_frequency_hz: number; end_frequency_hz: n
 type Workspace = { id: string; name: string; payload_json: string };
 type WorkspacePayload = { center_frequency_hz?: number; sample_rate_hz?: number; vfos?: VfoConfiguration[] };
 type Bookmark = { id: number; recording_id: string | null; sample_index: number; label: string };
+type Annotation = { id: number; recording_id: string | null; start_sample: number; end_sample: number; payload_json: string };
 function App() {
   const [view, setView] = useState("Live");
   const [status, setStatus] = useState<Status | null>(null);
@@ -37,6 +38,9 @@ function App() {
   const [workspaceName, setWorkspaceName] = useState("Live");
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [bookmarkLabel, setBookmarkLabel] = useState("Bookmark");
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [annotationLabel, setAnnotationLabel] = useState("Annotation");
+  const [annotationEnd, setAnnotationEnd] = useState<number | null>(null);
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [error, setError] = useState("");
   const selectedDevice = useRef<DeviceSelection | undefined>(undefined);
@@ -48,9 +52,9 @@ function App() {
   const lastFrame = useRef<ReturnType<typeof decodeSpectrum> | null>(null);
   async function refresh() {
     try {
-      const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse, markerResponse, detectionResponse, workspaceResponse, bookmarkResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`), fetch(`${API}/markers`), fetch(`${API}/detections`), fetch(`${API}/workspaces`), fetch(`${API}/bookmarks`)]);
-      if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok || !markerResponse.ok || !detectionResponse.ok || !workspaceResponse.ok || !bookmarkResponse.ok) throw new Error("Status request failed");
-      setStatus(await stateResponse.json() as Status); setVfos(await vfoResponse.json() as Vfo[]); setRecording(await recordingResponse.json() as Recording | null); setPlayback(await playbackResponse.json() as Playback | null); setAnalysis(await analysisResponse.json() as Analysis | null); setMarkers(await markerResponse.json() as Marker[]); setDetections(await detectionResponse.json() as SignalEvent[]); setWorkspaces(await workspaceResponse.json() as Workspace[]); setBookmarks(await bookmarkResponse.json() as Bookmark[]);
+      const [stateResponse, vfoResponse, recordingResponse, playbackResponse, analysisResponse, markerResponse, detectionResponse, workspaceResponse, bookmarkResponse, annotationResponse] = await Promise.all([fetch(`${API}/status`), fetch(`${API}/vfos`), fetch(`${API}/recording`), fetch(`${API}/playback`), fetch(`${API}/analysis`), fetch(`${API}/markers`), fetch(`${API}/detections`), fetch(`${API}/workspaces`), fetch(`${API}/bookmarks`), fetch(`${API}/annotations`)]);
+      if (!stateResponse.ok || !vfoResponse.ok || !recordingResponse.ok || !playbackResponse.ok || !analysisResponse.ok || !markerResponse.ok || !detectionResponse.ok || !workspaceResponse.ok || !bookmarkResponse.ok || !annotationResponse.ok) throw new Error("Status request failed");
+      setStatus(await stateResponse.json() as Status); setVfos(await vfoResponse.json() as Vfo[]); setRecording(await recordingResponse.json() as Recording | null); setPlayback(await playbackResponse.json() as Playback | null); setAnalysis(await analysisResponse.json() as Analysis | null); setMarkers(await markerResponse.json() as Marker[]); setDetections(await detectionResponse.json() as SignalEvent[]); setWorkspaces(await workspaceResponse.json() as Workspace[]); setBookmarks(await bookmarkResponse.json() as Bookmark[]); setAnnotations(await annotationResponse.json() as Annotation[]);
     } catch (error) { setError(String(error)); }
   }
   useEffect(() => {
@@ -156,6 +160,23 @@ function App() {
       await refresh(); setError("");
     } catch (error) { setError(String(error)); }
   }
+  async function saveAnnotation() {
+    if (!playback?.loaded || !annotationLabel.trim()) return;
+    const start_sample = playback.position_samples;
+    const end_sample = Math.max(start_sample, annotationEnd ?? start_sample);
+    try {
+      const response = await fetch(`${API}/annotations`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ recording_id: playback.session_id, start_sample, end_sample, payload_json: JSON.stringify({ label: annotationLabel.trim() }) }) });
+      if (!response.ok) throw new Error(await response.text());
+      await refresh(); setError("");
+    } catch (error) { setError(String(error)); }
+  }
+  async function deleteAnnotation(id: number) {
+    try {
+      const response = await fetch(`${API}/annotations/${id}`, { method: "DELETE" });
+      if (!response.ok && response.status !== 404) throw new Error(await response.text());
+      await refresh(); setError("");
+    } catch (error) { setError(String(error)); }
+  }
   const visible = !status?.device || status.device.supports_iq_streaming;
   return <main>
     <header><b>RF<span>Scope</span></b><nav>{["Live", "Receivers", "Recordings", "Playback", "Signals", "Analysis", "Workspaces", "Diagnostics", "Settings"].map(name => <button key={name} onClick={() => setView(name)} className={view === name ? "active" : ""}>{name}</button>)}</nav></header>
@@ -184,7 +205,7 @@ function App() {
     {view !== "Live" && <section className="panels workstation-view">
       {view === "Receivers" && <article><h3>Receivers</h3><VfoPanel vfos={vfos} center={status?.state.center_frequency_hz ?? 0} refresh={() => void refresh()} /></article>}
       {view === "Recordings" && <article><h3>Recordings</h3><p>{recording ? `${recording.id} · ${(recording.bytes_written / 1e6).toFixed(1)} MB · ${recording.dropped_blocks} dropped blocks` : "No active recording"}</p></article>}
-      {view === "Playback" && <article><h3>Playback timeline</h3><p>{playback?.loaded ? `${playback.session_id} · ${playback.position_samples.toLocaleString()} / ${playback.total_samples.toLocaleString()} samples` : "Load a SigMF metadata file above."}</p>{playback?.loaded && <><label>Bookmark <input aria-label="Bookmark label" value={bookmarkLabel} maxLength={256} onChange={event => setBookmarkLabel(event.target.value)} /></label><button onClick={() => void saveBookmark()}>Save at current sample</button><dl>{bookmarks.filter(bookmark => bookmark.recording_id === playback.session_id).map(bookmark => <React.Fragment key={bookmark.id}><dt>{bookmark.label} · {bookmark.sample_index.toLocaleString()}</dt><dd><button onClick={() => void playbackAction("PATCH", { action: "seek", position_samples: bookmark.sample_index })}>Seek</button><button onClick={() => void deleteBookmark(bookmark.id)}>Delete</button></dd></React.Fragment>)}</dl></>}</article>}
+      {view === "Playback" && <article><h3>Playback timeline</h3><p>{playback?.loaded ? `${playback.session_id} · ${playback.position_samples.toLocaleString()} / ${playback.total_samples.toLocaleString()} samples` : "Load a SigMF metadata file above."}</p>{playback?.loaded && <><label>Bookmark <input aria-label="Bookmark label" value={bookmarkLabel} maxLength={256} onChange={event => setBookmarkLabel(event.target.value)} /></label><button onClick={() => void saveBookmark()}>Save at current sample</button><dl>{bookmarks.filter(bookmark => bookmark.recording_id === playback.session_id).map(bookmark => <React.Fragment key={bookmark.id}><dt>{bookmark.label} · {bookmark.sample_index.toLocaleString()}</dt><dd><button onClick={() => void playbackAction("PATCH", { action: "seek", position_samples: bookmark.sample_index })}>Seek</button><button onClick={() => void deleteBookmark(bookmark.id)}>Delete</button></dd></React.Fragment>)}</dl><label>Annotation <input aria-label="Annotation label" value={annotationLabel} maxLength={256} onChange={event => setAnnotationLabel(event.target.value)} /></label><label>End sample <input aria-label="Annotation end sample" type="number" min={playback.position_samples} max={playback.total_samples} value={annotationEnd ?? playback.position_samples} onChange={event => setAnnotationEnd(Number(event.target.value))} /></label><button onClick={() => void saveAnnotation()}>Save range</button><dl>{annotations.filter(annotation => annotation.recording_id === playback.session_id).map(annotation => <React.Fragment key={annotation.id}><dt>{(() => { try { return (JSON.parse(annotation.payload_json) as { label?: string }).label ?? "Annotation"; } catch { return "Annotation"; } })()} · {annotation.start_sample.toLocaleString()}–{annotation.end_sample.toLocaleString()}</dt><dd><button onClick={() => void playbackAction("PATCH", { action: "seek", position_samples: annotation.start_sample })}>Seek</button><button onClick={() => void deleteAnnotation(annotation.id)}>Delete</button></dd></React.Fragment>)}</dl></>}</article>}
       {view === "Signals" && <article><h3>Signals</h3>{detections.length ? <dl>{detections.map(event => <React.Fragment key={event.id}><dt>{event.id} · {(event.start_frequency_hz / 1e6).toFixed(6)} MHz</dt><dd>{event.end_time_unix_ns == null ? "active" : "complete"} · {event.snr_db.toFixed(1)} dB SNR · {event.peak_dbfs.toFixed(1)} dBFS</dd></React.Fragment>)}</dl> : <p>No threshold events yet.</p>}</article>}
       {view === "Analysis" && <article><h3>Analysis</h3>{analysis ? <><button onClick={() => void addPeakMarker()}>Mark current peak</button><dl>{Object.entries(analysis).map(([key, value]) => <React.Fragment key={key}><dt>{key.replaceAll("_", " ")}</dt><dd>{value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</dd></React.Fragment>)}</dl><p>{markers.length} marker{markers.length === 1 ? "" : "s"} active</p></> : <p>Waiting for a spectrum frame.</p>}</article>}
       {view === "Workspaces" && <article><h3>Workspaces</h3><label>Name <input aria-label="Workspace name" value={workspaceName} maxLength={128} onChange={event => setWorkspaceName(event.target.value)} /></label><button onClick={() => void saveWorkspace()}>Save current workspace</button><p>Restoring applies capture settings and recreates saved VFO configurations with fresh runtime IDs.</p>{workspaces.length ? <dl>{workspaces.map(workspace => <React.Fragment key={workspace.id}><dt>{workspace.name}</dt><dd><button onClick={() => void loadWorkspace(workspace)}>Load</button><button onClick={() => void deleteWorkspace(workspace.id)}>Delete</button></dd></React.Fragment>)}</dl> : <p>No saved workspaces.</p>}</article>}
